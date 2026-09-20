@@ -24,21 +24,23 @@ REPORT_EVERY = 128 * 1024      # flush usage to the DB at least this often
 
 class RelayResult:
     def __init__(self):
-        self.sent = 0          # client -> target
-        self.recv = 0          # target -> client
+        self.sent = 0          # client -> target  = upload
+        self.recv = 0          # target -> client  = download
         self.error = ""
-        self._reported = 0
+        self._reported_sent = 0
+        self._reported_recv = 0
 
     @property
     def total(self):
         return self.sent + self.recv
 
     def pending(self):
-        return self.total - self._reported
+        return (self.sent - self._reported_sent) + (self.recv - self._reported_recv)
 
     def take(self):
-        self._reported = self.total
-        return self.total
+        """Return (upload_total, download_total) and mark them as reported."""
+        self._reported_sent, self._reported_recv = self.sent, self.recv
+        return self.sent, self.recv
 
 
 async def _pump_ws_to_tcp(ws, writer, result: RelayResult, first_payload: bytes, on_bytes):
@@ -57,7 +59,7 @@ async def _pump_ws_to_tcp(ws, writer, result: RelayResult, first_payload: bytes,
                 await writer.drain()
                 result.sent += len(data)
                 if on_bytes and result.pending() >= REPORT_EVERY:
-                    on_bytes(result.take(), False)
+                    on_bytes(*result.take(), False)
     except Exception as exc:  # noqa: BLE001 - any socket/WS error ends the pump
         result.error = result.error or f"upstream: {exc.__class__.__name__}"
     finally:
@@ -76,7 +78,7 @@ async def _pump_tcp_to_ws(reader, ws, result: RelayResult, on_bytes):
             await ws.send_bytes(data)
             result.recv += len(data)
             if on_bytes and result.pending() >= REPORT_EVERY:
-                on_bytes(result.take(), False)
+                on_bytes(*result.take(), False)
     except asyncio.TimeoutError:
         result.error = result.error or "idle timeout"
     except Exception as exc:  # noqa: BLE001
@@ -157,7 +159,7 @@ async def handle(ws, inbound: dict, client: dict, on_bytes=None, already_accepte
             pass
         if on_bytes and result.pending() > 0:
             try:
-                on_bytes(result.take(), True)
+                on_bytes(*result.take(), True)
             except Exception:
                 pass
     return result
