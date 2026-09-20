@@ -59,7 +59,15 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Dollax Panel", docs_url=None, redoc_url=None, lifespan=lifespan)
 app.add_middleware(SessionMiddleware, secret_key=SESSION_SECRET, same_site="lax", https_only=False)
 _HERE = os.path.dirname(os.path.abspath(__file__))
-app.mount("/static", StaticFiles(directory=os.path.join(_HERE, "static")), name="static")
+_STATIC_DIR = os.path.join(_HERE, "static")
+if os.path.isdir(_STATIC_DIR):
+    app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
+else:
+    # Never kill startup because an asset folder is missing (e.g. a repo push that
+    # forgot static/): warn loudly and keep the panel reachable so it can be fixed.
+    print("[dollax] WARNING: the 'static' folder is missing next to main.py — the UI will "
+          "load unstyled and /static/* will 404. Upload style.css, app.js (and optionally "
+          "lost-soul.mp3) into static/. See README §8.", flush=True)
 
 
 # ---------------------------------------------------------------- helpers
@@ -200,7 +208,12 @@ def entry_for(row, request: Request):
 # ---------------------------------------------------------------- pages
 @app.get("/health")
 async def health():
-    return {"ok": True, "service": "dollax-panel", "version": APP_VERSION}
+    info = db.db_status()
+    return {
+        "ok": True, "service": "dollax-panel", "version": APP_VERSION,
+        "db": info["path"], "journal": info["journal"], "writable": info["writable"],
+        "sqlite": info["sqlite"],
+    }
 
 
 @app.get("/login", response_class=HTMLResponse)
@@ -1058,6 +1071,7 @@ async def ws_entry(ws: WebSocket, full_path: str):
 # `python main.py` must work (Railway / Nixpacks / manual runs) — not only
 # `uvicorn main:app`. Reads $PORT like every PaaS expects.
 if __name__ == "__main__":
+    import traceback
     import uvicorn
 
     _port = int(os.getenv("PORT", "8080") or "8080")
@@ -1067,11 +1081,16 @@ if __name__ == "__main__":
           flush=True)
     print(f"[dollax] owner seed: {os.getenv('ADMIN_USERNAME') or 'dollax26'} / "
           f"{'env password' if os.getenv('ADMIN_PASSWORD') else 'default dollax26'}", flush=True)
-    uvicorn.run(
-        "main:app",
-        host="0.0.0.0",
-        port=_port,
-        proxy_headers=True,
-        forwarded_allow_ips="*",
-        log_level=(os.getenv("LOG_LEVEL") or "info"),
-    )
+    try:
+        uvicorn.run(
+            "main:app",
+            host="0.0.0.0",
+            port=_port,
+            proxy_headers=True,
+            forwarded_allow_ips="*",
+            log_level=(os.getenv("LOG_LEVEL") or "info"),
+        )
+    except Exception:  # noqa: BLE001 - make the real reason visible in the platform log
+        traceback.print_exc()
+        print("[dollax] FATAL: the server could not start — see the traceback above.", flush=True)
+        raise

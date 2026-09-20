@@ -12,17 +12,21 @@ outbound concept is removed — see README.md.
 """
 import os
 import json
+import sys
 import time
 import sqlite3
 import secrets
 import hashlib
 import hmac
 import tempfile
+import traceback
 import threading
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 
 import protocol
+
+JOURNAL_ACTIVE = ""
 
 # ---------------------------------------------------------------- paths / conn
 # The Worker used a D1 binding; here we need a writable directory. Never crash on
@@ -59,10 +63,42 @@ _write_lock = threading.RLock()
 
 
 def conn():
-    c = sqlite3.connect(DB_PATH, timeout=15)
+    """Open the DB. Never let a filesystem quirk crash the app.
+
+    WAL is faster but needs shared-memory support; some mounted volumes / network
+    filesystems reject it ("database is locked", "disk I/O error"). We try, then
+    fall back to DELETE. Force it with SQLITE_JOURNAL_MODE=delete if needed.
+    """
+    c = sqlite3.connect(DB_PATH, timeout=30)
     c.row_factory = sqlite3.Row
-    c.execute("PRAGMA journal_mode=WAL")
-    c.execute("PRAGMA foreign_keys=ON")
+    wanted = (os.getenv("SQLITE_JOURNAL_MODE") or "wal").strip().lower()
+    if wanted not in ("wal", "delete", "truncate", "persist", "memory", "off"):
+        wanted = "wal"
+    try:
+        row = c.execute(f"PRAGMA journal_mode={wanted}").fetchone()
+        global JOURNAL_ACTIVE
+        JOURNAL_ACTIVE = (row[0] if row else wanted) or wanted
+    except Exception as exc:  # noqa: BLE001
+        print(f"[dollax] journal_mode={wanted} rejected here ({exc.__class__.__name__}: {exc}); "
+              "falling back to DELETE", flush=True)
+        try:
+            # use a fresh handle: the failed statement above can leave the original
+            # one mid-flight, and changing journal mode then needs an exclusive lock
+            probe = sqlite3.connect(DB_PATH, timeout=30)
+            try:
+                row = probe.execute("PRAGMA journal_mode=DELETE").fetchone()
+                JOURNAL_ACTIVE = (row[0] if row else "delete") or "delete"
+            finally:
+                probe.close()
+        except Exception as exc2:  # noqa: BLE001
+            print(f"[dollax] journal_mode=DELETE also refused ({exc2.__class__.__name__}: {exc2}); "
+                  "keeping the filesystem default (the panel still works)", flush=True)
+            JOURNAL_ACTIVE = "default"
+    for pragma in ("PRAGMA busy_timeout=8000", "PRAGMA foreign_keys=ON"):
+        try:
+            c.execute(pragma)
+        except Exception:  # noqa: BLE001
+            pass
     return c
 
 
@@ -258,7 +294,51 @@ def _add_column(c, table, column, definition):
         c.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
 
+def db_status() -> dict:
+    """Small health block so the Railway log / /health can show what is going on."""
+    return {
+        "path": str(DB_PATH),
+        "dir": str(DATA_DIR),
+        "journal": JOURNAL_ACTIVE or "?",
+        "sqlite": sqlite3.sqlite_version,
+        "writable": os.access(str(DATA_DIR), os.W_OK),
+    }
+
+
 def init_db():
+    """Create/migrate the schema. If the configured directory fails (volume not
+    writable, filesystem without WAL/shm support, locked file…) switch to the temp
+    dir and keep serving instead of crash-looping."""
+    global DATA_DIR, DB_PATH
+    try:
+        _init_db_once()
+        print(f"[dollax] database ready: {DB_PATH} | journal={JOURNAL_ACTIVE} | sqlite={sqlite3.sqlite_version}",
+              flush=True)
+        return
+    except Exception as exc:  # noqa: BLE001
+        print(f"[dollax] FATAL-ish: database init failed on {DB_PATH} "
+              f"({exc.__class__.__name__}: {exc})", flush=True)
+        traceback.print_exc()
+
+    alt_dir = Path(tempfile.gettempdir()) / "dollax"
+    try:
+        alt_dir.mkdir(parents=True, exist_ok=True)
+        if Path(DB_PATH).parent == alt_dir:
+            raise RuntimeError("already using the temporary directory")
+        print(f"[dollax] WARNING: falling back to the TEMPORARY database at {alt_dir} — "
+              "data will be lost on restart. Fix: mount a Railway volume and point DATA_DIR at it, "
+              "or set SQLITE_JOURNAL_MODE=delete for filesystems without WAL support.", flush=True)
+        DATA_DIR = alt_dir
+        DB_PATH = alt_dir / "dollax.db"
+        _init_db_once()
+        print(f"[dollax] database ready (temporary): {DB_PATH} | journal={JOURNAL_ACTIVE}", flush=True)
+    except Exception as exc2:  # noqa: BLE001
+        print(f"[dollax] cannot initialise any database: {exc2.__class__.__name__}: {exc2}", flush=True)
+        traceback.print_exc()
+        raise
+
+
+def _init_db_once():
     with _write_lock, conn() as c:
         c.executescript(SCHEMA)
         for table, col, definition in MIGRATIONS:
