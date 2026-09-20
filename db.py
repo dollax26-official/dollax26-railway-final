@@ -177,6 +177,8 @@ CREATE TABLE IF NOT EXISTS inbounds(
   note TEXT NOT NULL DEFAULT '',
   enabled INTEGER NOT NULL DEFAULT 1,
   used_bytes INTEGER NOT NULL DEFAULT 0,
+  up_bytes INTEGER NOT NULL DEFAULT 0,
+  down_bytes INTEGER NOT NULL DEFAULT 0,
   sub_token TEXT NOT NULL DEFAULT '',
   created TEXT NOT NULL
 );
@@ -194,6 +196,8 @@ CREATE TABLE IF NOT EXISTS clients(
   note TEXT NOT NULL DEFAULT '',
   enabled INTEGER NOT NULL DEFAULT 1,
   used_bytes INTEGER NOT NULL DEFAULT 0,
+  up_bytes INTEGER NOT NULL DEFAULT 0,
+  down_bytes INTEGER NOT NULL DEFAULT 0,
   sub_token TEXT NOT NULL DEFAULT '',
   last_seen TEXT NOT NULL DEFAULT '',
   created TEXT NOT NULL,
@@ -212,6 +216,14 @@ CREATE TABLE IF NOT EXISTS settings(
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS admin_assets(
+  username TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  mime TEXT NOT NULL DEFAULT 'image/jpeg',
+  bytes BLOB NOT NULL,
+  updated TEXT NOT NULL,
+  PRIMARY KEY(username, kind)
+);
 CREATE TABLE IF NOT EXISTS activity(
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   ts TEXT NOT NULL,
@@ -225,6 +237,10 @@ CREATE TABLE IF NOT EXISTS activity(
 # columns added after the first Dollax schema was published (upgrade path)
 MIGRATIONS = [
     ("inbounds", "uuid", "TEXT NOT NULL DEFAULT ''"),
+    ("inbounds", "up_bytes", "INTEGER NOT NULL DEFAULT 0"),
+    ("inbounds", "down_bytes", "INTEGER NOT NULL DEFAULT 0"),
+    ("clients", "up_bytes", "INTEGER NOT NULL DEFAULT 0"),
+    ("clients", "down_bytes", "INTEGER NOT NULL DEFAULT 0"),
     ("activity", "ip", "TEXT NOT NULL DEFAULT ''"),
     ("inbounds", "network", "TEXT NOT NULL DEFAULT 'ws'"),
     ("inbounds", "security", "TEXT NOT NULL DEFAULT 'tls'"),
@@ -447,6 +463,31 @@ def owner_count() -> int:
         return int(r["n"] if r else 0)
 
 
+# ---------------------------------------------------------------- per-user assets
+# e.g. a custom dashboard background: stored per admin, never shared between users.
+def set_asset(username, kind, data: bytes, mime="image/jpeg"):
+    with _write_lock, conn() as c:
+        c.execute(
+            "INSERT INTO admin_assets(username,kind,mime,bytes,updated) VALUES(?,?,?,?,?) "
+            "ON CONFLICT(username,kind) DO UPDATE SET mime=excluded.mime, bytes=excluded.bytes, "
+            "updated=excluded.updated",
+            (username, kind, mime, sqlite3.Binary(data), now()))
+        c.commit()
+
+
+def get_asset(username, kind):
+    with conn() as c:
+        return c.execute("SELECT mime, bytes, updated FROM admin_assets WHERE username=? AND kind=?",
+                         (username, kind)).fetchone()
+
+
+def delete_asset(username, kind) -> bool:
+    with _write_lock, conn() as c:
+        cur = c.execute("DELETE FROM admin_assets WHERE username=? AND kind=?", (username, kind))
+        c.commit()
+        return cur.rowcount > 0
+
+
 # ---------------------------------------------------------------- activity
 def log(username, action, detail="", ip=""):
     try:
@@ -558,11 +599,14 @@ def delete_inbound(iid) -> bool:
         return cur.rowcount > 0
 
 
-def add_inbound_usage(iid, nbytes):
-    if nbytes <= 0:
+def add_inbound_usage(iid, up=0, down=0):
+    """Client->target is upload, target->client is download."""
+    up, down = int(up or 0), int(down or 0)
+    if up <= 0 and down <= 0:
         return
     with _write_lock, conn() as c:
-        c.execute("UPDATE inbounds SET used_bytes=used_bytes+? WHERE id=?", (int(nbytes), iid))
+        c.execute("UPDATE inbounds SET used_bytes=used_bytes+?, up_bytes=up_bytes+?, down_bytes=down_bytes+? "
+                  "WHERE id=?", (up + down, up, down, iid))
         c.commit()
 
 
@@ -643,15 +687,17 @@ def regenerate_client(cid) -> str:
 def reset_usage(cid, reset_traffic=True):
     with _write_lock, conn() as c:
         if reset_traffic:
-            c.execute("UPDATE clients SET used_bytes=0 WHERE id=?", (cid,))
+            c.execute("UPDATE clients SET used_bytes=0, up_bytes=0, down_bytes=0 WHERE id=?", (cid,))
         c.commit()
 
 
-def add_client_usage(cid, nbytes):
-    if nbytes <= 0:
+def add_client_usage(cid, up=0, down=0):
+    up, down = int(up or 0), int(down or 0)
+    if up <= 0 and down <= 0:
         return
     with _write_lock, conn() as c:
-        c.execute("UPDATE clients SET used_bytes=used_bytes+?, last_seen=? WHERE id=?", (int(nbytes), now(), cid))
+        c.execute("UPDATE clients SET used_bytes=used_bytes+?, up_bytes=up_bytes+?, down_bytes=down_bytes+?, "
+                  "last_seen=? WHERE id=?", (up + down, up, down, now(), cid))
         c.commit()
 
 
