@@ -10,7 +10,11 @@ FONTS = (
     '<link rel="preconnect" href="https://fonts.googleapis.com">'
     '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>'
     '<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&'
-    'family=Vazirmatn:wght@400;600;700;800;900&display=swap" rel="stylesheet">'
+    'family=Vazirmatn:wght@400;600;700;800;900&'
+    'family=Poppins:wght@400;600;700;800&'
+    'family=Roboto:wght@400;500;700;900&'
+    'family=Space+Grotesk:wght@400;600;700&'
+    'family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">'
 )
 
 
@@ -102,6 +106,8 @@ def subscription_page(data):
       <div class="bar"><i style="width:{c["pct"]}%"></i></div>
       <div class="kv-line">
         <span>{t("used")} <b>{esc(c["used"])}</b></span>
+        <span>{t("download")} <b>{esc(c.get("down", "\u2014"))}</b></span>
+        <span>{t("upload")} <b>{esc(c.get("up", "\u2014"))}</b></span>
         <span>{t("remaining")} <b>{esc(c["remaining"])}</b></span>
         <span>{t("expires")} <b>{esc(c["expires"])}</b></span>
       </div>
@@ -128,6 +134,8 @@ def subscription_page(data):
         <span>{t("protocol")} <b>{esc(data["protocol"].upper())}</b></span>
         <span>{t("clients")} <b>{esc(str(data["client_count"]))}</b></span>
         <span>{t("configNodes")} <b>{esc(str(data["config_count"]))}</b></span>
+        <span>{t("download")} <b>{esc(data.get("down", "\u2014"))}</b></span>
+        <span>{t("upload")} <b>{esc(data.get("up", "\u2014"))}</b></span>
       </div>
       <div class="sub-url">
         <code id="subUrl">{esc(data["sub_url"])}</code>
@@ -178,7 +186,7 @@ _FA = {
     "running": "فعال", "copy": "کپی", "copied": "کپی شد",
     "copySub": "کپی سابسکریپشن", "clashSub": "سابسکریپشن کلش",
     "singboxSub": "سابسکریپشن سینگ‌باکس", "genericSub": "عمومی / base64",
-    "used": "مصرف", "remaining": "باقیمانده", "expires": "انقضا",
+    "used": "مصرف", "remaining": "باقیمانده", "expires": "انقضا", "upload": "آپلود", "download": "دانلود",
     "protocol": "پروتکل", "clients": "کاربران", "configNodes": "تعداد کانفیگ",
     "noClients": "کاربری وجود ندارد", "subEmptyHint": "از پنل یک کاربر به این اینباند اضافه کنید.",
     "subFooter": "این صفحه مخصوص این اینباند است",
@@ -190,7 +198,7 @@ _EN = {
     "running": "Running", "copy": "Copy", "copied": "Copied",
     "copySub": "Copy subscription", "clashSub": "Clash subscription",
     "singboxSub": "sing-box subscription", "genericSub": "Generic / base64",
-    "used": "Used", "remaining": "Remaining", "expires": "Expires",
+    "used": "Used", "remaining": "Remaining", "expires": "Expires", "upload": "Upload", "download": "Download",
     "protocol": "Protocol", "clients": "Clients", "configNodes": "Configs",
     "noClients": "No clients", "subEmptyHint": "Add a client to this inbound from the panel.",
     "subFooter": "This page belongs to this inbound",
