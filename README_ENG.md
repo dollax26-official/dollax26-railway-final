@@ -271,6 +271,76 @@ In **Inbounds → Port** you are choosing what ends up inside the client link
 * the only way to open extra raw TCP ports on Railway is its **TCP Proxy** feature, and this app
   doesn't listen on extras — one uvicorn process, one port, many paths.
 
+## 10. Traffic counters and ping
+
+**Upload and download are now real and per client.** The relay counts both directions while proxying:
+
+* `upload` = client → target, `download` = target → client
+* stored separately (`clients.up_bytes` / `clients.down_bytes`) and flushed *during* the connection,
+  so a dropped or killed connection still counts what it moved
+* shown in **Clients** (dedicated ↓ Download / ↑ Upload columns), on the inbound cards, on the
+  graphical subscription page, and in the `Subscription-Userinfo` header your client apps read
+* `used_bytes` stays the sum, so quotas keep working; **Reset** clears up, down and total
+
+**Ping** is a server-side TCP connect measurement — the same mechanism Vodiwalker uses
+(`POST /api/network/tcp-ping`):
+
+| Where | What it does |
+|---|---|
+| Clients → **Ping** button | fills that row's Ping column with `ms` (or `timeout`) |
+| Inbounds → **Ping** button | measures the inbound's own address:port |
+| `POST /api/ping {host, port}` | generic, returns `{ok, latency_ms}` |
+
+It measures the **server's** latency to the endpoint (is it reachable from the panel), not your
+phone's latency — keep that in mind when comparing with a client app's ping.
+
+Only VLESS/Trojan traffic is proxied by this app, so VMess/Shadowsocks usage will not appear in these
+counters until those clients go through the Xray bridge.
+
+### The Add-inbound form is deliberately small now
+
+One row of **selects** — protocol (VLESS / VMess / Trojan / Shadowsocks) · transport (WebSocket /
+XHTTP / gRPC / TCP) · security (TLS / Reality / None) · fingerprint — plus name, address, port,
+path, quota (GB), validity (days), configs per client, client limit, note and an enabled switch.
+That is 10 inputs instead of 20+.
+
+Removed from the UI (still accepted by the API for compatibility): **SNI**, **Host header**, ALPN,
+Reality keys, gRPC service/mode, XHTTP mode, TCP header type, flow, fragment and the Shadowsocks
+method/password pair. SNI and the Host header now default to the inbound's address, which is what you
+want on Railway (TLS is terminated on your own domain).
+
+## 11. Appearance: fonts, backgrounds, per-user privacy
+
+Everything in **Settings → Appearance** belongs to the signed-in admin and is written **only when you
+press _Save appearance_** — you see a live preview while editing, but nothing is stored until you save.
+
+| Setting | Options |
+|---|---|
+| Language | English / فارسی (RTL) |
+| Interface style | Solid / Glass |
+| Theme colour | 7 themes |
+| **Font** | Inter · Vazirmatn · Poppins · Roboto · Space Grotesk · JetBrains Mono · System |
+| Music | on/off + volume |
+| **Background** | Default UI · the three shipped wallpapers (↓ *moon*, *minimal*, *arcade*) · **your own upload** |
+| Darken / Blur | 0–80 % / 0–20 px so text stays readable over any picture |
+| **Use background** | on/off — switch it off and you are back to the plain default UI/overview |
+
+**Uploads are private to the admin who made them.** The image is stored per username
+(`admin_assets`, keyed by username+kind) and served only to that admin through `GET /api/me/background`;
+another admin gets `204` and keeps their own choice. The browser downscales the picture to ≤1920 px JPEG
+before uploading, the server accepts only JPEG/PNG/WebP and refuses anything over 3 MB, and
+**Remove my background** deletes it and flips you back to the default UI.
+
+Presets live in `static/bg/` — drop more `*.jpg` files there and they appear in the picker
+automatically (`GET /api/backgrounds` lists them).
+
+**Removed in this round**
+
+* the **panel name** field in Settings (the stored value is still used for page titles);
+* the inbound screen's subscription buttons — per-client subscription links live in **Clients**, and an
+  inbound's graphical page is still reachable at `/sub/<inbound-token>` (a browser is redirected to
+  `/info/<token>`).
+
 ---
 
-_Document version: 2026.09.20 · shipped with the Railway build (Dollax Panel)._
+_Document version: 2026.09.21 · shipped with the Railway build (Dollax Panel)._
