@@ -11,6 +11,7 @@ inbound could point at an outbound (direct / socks5 / http) to pick the exit;
 this app is itself the endpoint, so an inbound is self-contained. See README.md.
 """
 import asyncio
+import base64
 import hashlib
 import os
 import secrets
@@ -28,7 +29,7 @@ for _p in (_BOOT_DIR, os.getcwd()):
     if _p and _p not in sys.path:
         sys.path.insert(0, _p)
 
-from fastapi import FastAPI, Request, WebSocket
+from fastapi import FastAPI, Request, WebSocket, Response
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
@@ -165,7 +166,11 @@ def inbound_dict(row) -> dict:
     d["native"] = protocol.clean_protocol(d.get("protocol")) in protocol.NATIVE_PROTOCOLS
     d["warn"] = "" if d["native"] else "Needs the external Xray bridge (VMess/SS are not WebSocket protocols)."
     d["used_bytes"] = int(d.get("used_bytes") or 0)
+    d["up_bytes"] = int(d.get("up_bytes") or 0)
+    d["down_bytes"] = int(d.get("down_bytes") or 0)
     d["used_human"] = protocol.fmt_bytes(d["used_bytes"])
+    d["up_human"] = protocol.fmt_bytes(d["up_bytes"])
+    d["down_human"] = protocol.fmt_bytes(d["down_bytes"])
     d["limit_human"] = protocol.fmt_bytes(d.get("limit_bytes") or 0)
     d["days_left"] = db.days_left(d.get("expires_at"))
     d["expired"] = db.is_expired(d.get("expires_at"))
@@ -177,7 +182,11 @@ def client_dict(row, request: Request, inbound=None) -> dict:
     d["enabled"] = bool(d.get("enabled"))
     d["clean_ips"] = db.json_list(d.get("clean_ips"))
     d["used_bytes"] = int(d.get("used_bytes") or 0)
+    d["up_bytes"] = int(d.get("up_bytes") or 0)
+    d["down_bytes"] = int(d.get("down_bytes") or 0)
     d["used_human"] = protocol.fmt_bytes(d["used_bytes"])
+    d["up_human"] = protocol.fmt_bytes(d["up_bytes"])
+    d["down_human"] = protocol.fmt_bytes(d["down_bytes"])
     d["limit_human"] = protocol.fmt_bytes(d.get("limit_bytes") or 0)
     d["days_left"] = db.days_left(d.get("expires_at"))
     d["expired"] = db.is_expired(d.get("expires_at"))
@@ -282,9 +291,83 @@ async def api_me_prefs(request: Request):
     d = await request.json()
     prefs = db.get_prefs(current_user(request))
     prefs.update({k: v for k, v in (d or {}).items()
-                 if k in ("language", "theme", "style", "music", "music_volume", "accent", "font", "motion")})
+                 if k in ("language", "theme", "style", "font", "music", "music_volume",
+                          "accent", "motion", "background", "bg_dim", "bg_blur", "bg_enabled")})
     db.set_prefs(current_user(request), prefs)
     return {"ok": True, "prefs": prefs}
+
+
+# ------------------------------------------------- per-user appearance assets
+BG_MIME = {"image/jpeg", "image/jpg", "image/png", "image/webp"}
+BG_MAX = 3_500_000
+
+
+@app.get("/api/backgrounds")
+async def api_backgrounds(request: Request):
+    """Preset wallpapers shipped in static/bg + whether this admin uploaded one."""
+    if not authed(request):
+        return unauthorized()
+    presets = []
+    bgdir = os.path.join(_HERE, "static", "bg")
+    if os.path.isdir(bgdir):
+        for name in sorted(os.listdir(bgdir)):
+            if name.lower().endswith((".jpg", ".jpeg", ".png", ".webp")):
+                presets.append({"id": os.path.splitext(name)[0], "url": f"/static/bg/{name}",
+                                "bytes": os.path.getsize(os.path.join(bgdir, name))})
+    row = db.get_asset(current_user(request), "background")
+    return {"presets": presets, "custom": row is not None,
+            "custom_updated": (row["updated"] if row else "")}
+
+
+@app.get("/api/me/background")
+async def api_get_background(request: Request):
+    """This admin's uploaded background only (no other user can read it)."""
+    if not authed(request):
+        return unauthorized()
+    row = db.get_asset(current_user(request), "background")
+    if not row:
+        return Response(status_code=204)
+    return Response(content=bytes(row["bytes"]), media_type=row["mime"] or "image/jpeg",
+                    headers={"Cache-Control": "no-store"})
+
+
+@app.post("/api/me/background")
+async def api_set_background(request: Request):
+    if not authed(request):
+        return unauthorized()
+    d = await request.json()
+    payload = str((d or {}).get("data") or "")
+    mime = str((d or {}).get("mime") or "image/jpeg").lower()
+    b64 = payload
+    if payload.startswith("data:") and "," in payload:
+        head, b64 = payload.split(",", 1)
+        mime = (head[5:].split(";")[0] or mime).lower()
+    if mime not in BG_MIME:
+        return JSONResponse({"error": "Only JPEG, PNG or WebP images."}, status_code=400)
+    try:
+        raw = base64.b64decode(b64, validate=False)
+    except Exception:
+        return JSONResponse({"error": "That is not valid image data."}, status_code=400)
+    if not raw:
+        return JSONResponse({"error": "Empty image."}, status_code=400)
+    if len(raw) > BG_MAX:
+        return JSONResponse({"error": f"Image too large ({len(raw) // 1024} KB). Keep it under 3 MB."},
+                            status_code=413)
+    db.set_asset(current_user(request), "background", raw, mime)
+    db.log(current_user(request), "background-upload", f"{len(raw) // 1024} KB {mime}", ip=client_ip(request))
+    return {"ok": True, "bytes": len(raw), "mime": mime}
+
+
+@app.delete("/api/me/background")
+async def api_delete_background(request: Request):
+    if not authed(request):
+        return unauthorized()
+    removed = db.delete_asset(current_user(request), "background")
+    prefs = db.get_prefs(current_user(request))
+    prefs["background"] = "none"
+    db.set_prefs(current_user(request), prefs)
+    db.log(current_user(request), "background-remove", ip=client_ip(request))
+    return {"ok": True, "removed": removed, "prefs": prefs}
 
 
 # ---------------------------------------------------------------- overview
@@ -295,12 +378,16 @@ async def api_summary(request: Request):
     inbounds = db.list_inbounds()
     clients = db.list_clients()
     total_used = sum(int(c.get("used_bytes") or 0) for c in clients)
+    total_up = sum(int(c.get("up_bytes") or 0) for c in clients)
+    total_down = sum(int(c.get("down_bytes") or 0) for c in clients)
     active = sum(1 for c in clients if c["enabled"] and not db.is_expired(c.get("expires_at")))
     native = sum(1 for i in inbounds if protocol.clean_protocol(i["protocol"]) in protocol.NATIVE_PROTOCOLS)
     return {
         "inbounds": len(inbounds), "clients": len(clients), "active_clients": active,
         "native_inbounds": native,
         "total_used_bytes": total_used, "total_used_human": protocol.fmt_bytes(total_used),
+        "total_up_bytes": total_up, "total_up_human": protocol.fmt_bytes(total_up),
+        "total_down_bytes": total_down, "total_down_human": protocol.fmt_bytes(total_down),
         "transport": "WSS", "host": effective_host(request), "version": APP_VERSION,
         "default_port": db.setting("default_port", "443"),
     }
@@ -681,6 +768,61 @@ async def api_reset_usage(request: Request, cid: str):
     return {"ok": True, "client": client_dict(db.client_row(cid), request)}
 
 
+# ---------------------------------------------------------------- ping (latency)
+async def _tcp_ping(host: str, port: int, timeout: float = 4.0) -> dict:
+    """Server-side TCP connect latency — the same mechanism Vodiwalker uses (/api/network/tcp-ping)."""
+    started = time.perf_counter()
+    try:
+        reader, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout=timeout)
+        ms = round((time.perf_counter() - started) * 1000, 1)
+        try:
+            writer.close()
+        except Exception:  # noqa: BLE001
+            pass
+        return {"ok": True, "host": host, "port": port, "latency_ms": ms}
+    except asyncio.TimeoutError:
+        return {"ok": False, "host": host, "port": port, "latency_ms": None, "error": "timeout"}
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "host": host, "port": port, "latency_ms": None,
+                "error": f"{exc.__class__.__name__}: {str(exc)[:120]}"}
+
+
+@app.post("/api/ping")
+async def api_ping(request: Request):
+    if not authed(request):
+        return unauthorized()
+    d = await request.json()
+    host = str((d or {}).get("host") or "").strip()[:253]
+    port = as_int((d or {}).get("port"), 443, 1, 65535)
+    timeout = min(10.0, as_float((d or {}).get("timeout"), 4.0, 0.5))
+    if not host:
+        return JSONResponse({"error": "host is required"}, status_code=400)
+    return await _tcp_ping(host, port, timeout)
+
+
+@app.post("/api/inbounds/{iid}/ping")
+async def api_inbound_ping(request: Request, iid: str):
+    if not authed(request):
+        return unauthorized()
+    row = db.inbound_row(iid)
+    if not row:
+        return JSONResponse({"error": "Inbound not found"}, status_code=404)
+    return await _tcp_ping(row["address"] or effective_host(request), as_int(row["port"], 443, 1, 65535))
+
+
+@app.post("/api/clients/{cid}/ping")
+async def api_client_ping(request: Request, cid: str):
+    if not authed(request):
+        return unauthorized()
+    row = db.client_row(cid)
+    if not row:
+        return JSONResponse({"error": "Client not found"}, status_code=404)
+    ib = db.inbound_row(row["inbound_id"])
+    if not ib:
+        return JSONResponse({"error": "Inbound not found"}, status_code=404)
+    return await _tcp_ping(ib["address"] or effective_host(request), as_int(ib["port"], 443, 1, 65535))
+
+
 # ---------------------------------------------------------------- settings
 @app.get("/api/settings")
 async def api_get_settings(request: Request):
@@ -826,7 +968,9 @@ def _sub_lines(entries, host):
 
 
 def _userinfo_header(entries):
-    used = sum(int(cl.get("used_bytes") or 0) for _, cl in entries)
+    """Real counters: upload = client->target, download = target->client."""
+    upload = sum(int(cl.get("up_bytes") or 0) for _, cl in entries)
+    download = sum(int(cl.get("down_bytes") or 0) for _, cl in entries)
     limit = sum(int(cl.get("limit_bytes") or 0) for _, cl in entries)
     expires = [cl.get("expires_at") for _, cl in entries if cl.get("expires_at")]
     expire_ts = 0
@@ -836,8 +980,7 @@ def _userinfo_header(entries):
             expire_ts = int(datetime.fromisoformat(min(expires)).timestamp())
         except Exception:
             expire_ts = 0
-    upload = int(used * 0.4)
-    return f"upload={upload}; download={used - upload}; total={limit}; expire={expire_ts}"
+    return f"upload={upload}; download={download}; total={limit}; expire={expire_ts}"
 
 
 def _entry_host(ib: dict, cl: dict, request: Request) -> str:
@@ -922,6 +1065,8 @@ async def subscription_info(token: str, request: Request):
     # an inbound token shows every client; a client token shows just that client
     inbound = entries[0][0]
     used = sum(int(cl.get("used_bytes") or 0) for _, cl in entries)
+    up_all = sum(int(cl.get("up_bytes") or 0) for _, cl in entries)
+    down_all = sum(int(cl.get("down_bytes") or 0) for _, cl in entries)
     limit = sum(int(cl.get("limit_bytes") or 0) for _, cl in entries)
     pct = min(100, round(used / limit * 100)) if limit else 0
     expires_vals = [cl.get("expires_at") for _, cl in entries if cl.get("expires_at")]
@@ -929,6 +1074,8 @@ async def subscription_info(token: str, request: Request):
     clients_view = []
     for ib, cl in entries:
         c_used = int(cl.get("used_bytes") or 0)
+        c_up = int(cl.get("up_bytes") or 0)
+        c_down = int(cl.get("down_bytes") or 0)
         c_limit = int(cl.get("limit_bytes") or 0)
         links = protocol.link_list(ib, cl["uuid"], host, cl.get("clean_ips") or ib.get("clean_ips"))
         expired = db.is_expired(cl.get("expires_at"))
@@ -944,6 +1091,8 @@ async def subscription_info(token: str, request: Request):
             "name": cl.get("name"), "status": status, "status_class": status_class,
             "pct": min(100, round(c_used / c_limit * 100)) if c_limit else 0,
             "used": protocol.fmt_bytes(c_used),
+            "up": protocol.fmt_bytes(c_up),
+            "down": protocol.fmt_bytes(c_down),
             "remaining": protocol.fmt_bytes(max(0, c_limit - c_used)) if c_limit else "∞",
             "expires": (str(cl.get("expires_at"))[:10] if cl.get("expires_at") else "∞"),
             "sub_url": f"{base_url(request)}/sub/{cl.get('sub_token')}",
@@ -963,6 +1112,8 @@ async def subscription_info(token: str, request: Request):
         "client_count": len(clients_view),
         "config_count": sum(max(1, int(ib.get("config_count") or 1)) for ib, _ in entries),
         "pct": pct,
+        "up": protocol.fmt_bytes(up_all),
+        "down": protocol.fmt_bytes(down_all),
         "sub_url": sub_url,
         "sub_clash": sub_url + "?target=clash",
         "sub_singbox": sub_url + "?target=singbox",
@@ -1044,17 +1195,19 @@ async def ws_entry(ws: WebSocket, full_path: str):
 
     original_receive = ws.receive
     replayed = {"v": False}
-    reported = {"n": 0}
+    reported = {"up": 0, "down": 0}
     ws.receive = replay  # type: ignore[assignment]
 
-    def on_bytes(total, final=False):
-        delta = int(total) - reported["n"]
-        if delta <= 0:
+    def on_bytes(up_total, down_total, final=False):
+        up_delta = int(up_total) - reported["up"]
+        down_delta = int(down_total) - reported["down"]
+        if up_delta <= 0 and down_delta <= 0:
             return
-        reported["n"] = int(total)
+        reported["up"] = int(up_total)
+        reported["down"] = int(down_total)
         if client.get("id"):
-            db.add_client_usage(client["id"], delta)
-        db.add_inbound_usage(inbound["id"], delta)
+            db.add_client_usage(client["id"], up_delta, down_delta)
+        db.add_inbound_usage(inbound["id"], up_delta, down_delta)
 
     try:
         await relay.handle(ws, inbound, dict(client), on_bytes=on_bytes, already_accepted=True)
