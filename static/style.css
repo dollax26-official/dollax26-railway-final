@@ -22,6 +22,14 @@
   --r:12px;
   --font-main:Inter,'Vazirmatn',system-ui,-apple-system,'Segoe UI',Tahoma,sans-serif;
 }
+/* font choices (Appearance) */
+:root{--font-main:Inter,'Vazirmatn',system-ui,-apple-system,'Segoe UI',Tahoma,sans-serif}
+html[data-font="vazirmatn"]{--font-main:'Vazirmatn',Inter,system-ui,Tahoma,sans-serif}
+html[data-font="poppins"]{--font-main:Poppins,Inter,system-ui,sans-serif}
+html[data-font="roboto"]{--font-main:Roboto,Inter,system-ui,sans-serif}
+html[data-font="space"]{--font-main:'Space Grotesk',Inter,system-ui,sans-serif}
+html[data-font="mono"]{--font-main:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+html[data-font="system"]{--font-main:system-ui,-apple-system,'Segoe UI',Roboto,Tahoma,sans-serif}
 html[data-theme="dark-cyan"]{--bg0:#05090f;--bg1:#071119;--bg2:#08131d;--glow:rgba(8,145,178,.30);--accent:#22d3ee;--accent-2:#67e8f9;--accent-ink:#03141a;--brand-a:#22d3ee;--brand-b:#0e7490;--line:#1c3340;--panel:#0e1c26;--panel-2:#122430;--panel-3:#0b1720}
 html[data-theme="dark-blue"]{--bg0:#060910;--bg1:#091120;--bg2:#0a1324;--glow:rgba(37,99,235,.28);--accent:#4f8cff;--accent-2:#7fb0ff;--accent-ink:#05101f;--brand-a:#4f8cff;--brand-b:#1d4ed8;--line:#1f2f4a;--panel:#101a2c;--panel-2:#142036;--panel-3:#0d1626}
 html[data-theme="green"]{--bg0:#060f09;--bg1:#09160d;--bg2:#0b1810;--glow:rgba(34,197,94,.26);--accent:#22c55e;--accent-2:#4ade80;--accent-ink:#04140a;--brand-a:#22c55e;--brand-b:#15803d;--line:#203a29;--panel:#0f1f15;--panel-2:#13271b;--panel-3:#0c1a11}
@@ -211,6 +219,39 @@ td .sub{display:block;font-size:9.5px;color:var(--muted);margin-top:2px}
 .toast{background:#101a29;border:1px solid var(--line);color:var(--text);border-radius:10px;padding:10px 14px;font-size:11.5px;box-shadow:var(--shadow);animation:modalIn .16s ease;max-width:330px}
 .toast.ok{border-color:color-mix(in srgb,var(--success) 45%,var(--line))}
 .toast.bad{border-color:color-mix(in srgb,var(--danger) 45%,var(--line))}
+
+/* ---------------------------------------------------------------- custom background */
+.bg-layer{
+  position:fixed;inset:0;z-index:-1;background-size:cover;background-position:center;
+  background-repeat:no-repeat;background-attachment:fixed;transition:opacity .25s ease;
+}
+.bg-layer::after{content:"";position:absolute;inset:0;background:rgba(4,8,14,var(--bg-dim,.35))}
+html[data-bg="on"]{background:#070c14}
+html[data-bg="on"] body{background:transparent}
+html[data-bg="on"] .sidebar{background:color-mix(in srgb,var(--sidebar-bg) 72%,transparent)}
+html[data-bg="on"] .topbar{background:color-mix(in srgb,var(--topbar-bg) 72%,transparent)}
+html[data-bg="on"] .card,
+html[data-bg="on"] .stat,
+html[data-bg="on"] .ib-card,
+html[data-bg="on"] .tblwrap{backdrop-filter:blur(7px)}
+
+/* background picker */
+.bg-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(116px,1fr));gap:10px}
+.bg-thumb{
+  position:relative;aspect-ratio:16/10;border-radius:10px;border:1px solid var(--line);
+  background-size:cover;background-position:center;cursor:pointer;overflow:hidden;
+  transition:border-color .15s, box-shadow .15s;
+}
+.bg-thumb:hover{border-color:#3a4d68}
+.bg-thumb.on{border-color:var(--accent);box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 28%,transparent)}
+.bg-thumb span{
+  position:absolute;inset-inline:0;bottom:0;padding:4px 6px;font-size:9px;letter-spacing:.4px;
+  background:rgba(4,8,14,.62);color:#dfe8f5;text-align:center;
+}
+.bg-thumb.none{display:grid;place-items:center;background:#101a29;color:var(--muted);font-size:10px}
+.range-row{display:flex;align-items:center;gap:10px}
+.range-row input[type=range]{width:150px;accent-color:var(--accent)}
+.range-row .val{font-size:10.5px;color:var(--muted);min-width:34px}
 
 /* ---------------------------------------------------------------- login */
 .login-wrap{min-height:100vh;display:grid;place-items:center;padding:22px}
