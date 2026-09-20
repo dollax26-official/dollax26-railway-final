@@ -47,6 +47,14 @@ const I18N = {
     copyConfig: 'Copy config', copyCaddy: 'Copy Caddyfile', copySteps: 'Copy steps',
     diagOk: 'OK', diagWarn: 'WARN', diagInfo: 'INFO',
     confirmTitle: 'Are you sure?', yes: 'Yes, delete it', noSelection: 'Select something first',
+    ping: 'Ping', latency: 'Latency', download: 'Download', upload: 'Upload', upShort: '↑', downShort: '↓',
+    background: 'Background', bgNone: 'Default UI', bgCustom: 'My upload', bgDim: 'Darken',
+    bgBlur: 'Blur', uploadBg: 'Upload image', removeBg: 'Remove my background',
+    bgPerUser: 'Your background is private to your account — other admins never see it.',
+    bgEnabled: 'Use background', saveAppearance: 'Save appearance', resetAppearance: 'Reset',
+    fontFamily: 'Font', bgUploaded: 'Background saved', bgRemoved: 'Background removed',
+    appearanceSaved: 'Appearance saved', appearanceReset: 'Appearance reset to defaults',
+    uploading: 'Uploading…',
     created: 'Created', updated: 'Updated', deleted: 'Deleted', saved: 'Saved',
     step1: 'Base protocol', step1s: 'What kind of credential the client uses',
     step2: 'Transport', step2s: 'How traffic is carried over HTTPS',
@@ -107,6 +115,14 @@ const I18N = {
     copyConfig: 'کپی کانفیگ', copyCaddy: 'کپی Caddyfile', copySteps: 'کپی مراحل',
     diagOk: 'سالم', diagWarn: 'هشدار', diagInfo: 'اطلاع',
     confirmTitle: 'مطمئنید؟', yes: 'بله، حذف کن', noSelection: 'چیزی انتخاب نشده',
+    ping: 'پینگ', latency: 'تأخیر', download: 'دانلود', upload: 'آپلود', upShort: '↑', downShort: '↓',
+    background: 'پس‌زمینه', bgNone: 'رابط پیش‌فرض', bgCustom: 'آپلود خودم', bgDim: 'تیره‌کردن',
+    bgBlur: 'محو', uploadBg: 'آپلود تصویر', removeBg: 'حذف پس‌زمینه‌ی من',
+    bgPerUser: 'پس‌زمینه‌ی شما فقط در حساب خودتان دیده می‌شود.',
+    bgEnabled: 'استفاده از پس‌زمینه', saveAppearance: 'ذخیره‌ی ظاهر', resetAppearance: 'بازنشانی',
+    fontFamily: 'فونت', bgUploaded: 'پس‌زمینه ذخیره شد', bgRemoved: 'پس‌زمینه حذف شد',
+    appearanceSaved: 'ظاهر ذخیره شد', appearanceReset: 'ظاهر به حالت پیش‌فرض برگشت',
+    uploading: 'در حال آپلود…',
     created: 'ساخته شد', updated: 'به‌روز شد', deleted: 'حذف شد', saved: 'ذخیره شد',
     step1: 'پروتکل پایه', step1s: 'نوع اعتباری که کاربر استفاده می‌کند',
     step2: 'ترنسپورت', step2s: 'نحوه انتقال ترافیک روی HTTPS',
@@ -231,16 +247,118 @@ function musicApply() {
 }
 
 /* ------------------------------------------------------------------ prefs */
-function applyPrefs() {
-  const P = S.prefs || {};
+function applyPrefs(override) {
+  const P = override || S.prefs || {};
   LANG = P.language === 'fa' ? 'fa' : 'en';
   const theme = THEMES.some((t) => t[0] === P.theme) ? P.theme : 'dark-green';
   const html = document.documentElement;
   html.setAttribute('data-theme', theme);
   html.setAttribute('data-style', P.style === 'glass' ? 'glass' : 'solid');
+  const font = FONTS_LIST.some((f) => f[0] === P.font) ? P.font : 'inter';
+  html.setAttribute('data-font', font);
   html.setAttribute('lang', LANG);
   html.setAttribute('dir', LANG === 'fa' ? 'rtl' : 'ltr');
+  applyBackground(P);
   musicApply();
+}
+
+/* ---- per-user background (never shared with another admin) ---- */
+const FONTS_LIST = [['inter', 'Inter'], ['vazirmatn', 'Vazirmatn'], ['poppins', 'Poppins'],
+  ['roboto', 'Roboto'], ['space', 'Space Grotesk'], ['mono', 'JetBrains Mono'], ['system', 'System']];
+const BG_DEFAULTS = { background: 'none', bg_dim: 35, bg_blur: 0, bg_enabled: true };
+
+function bgUrl(P) {
+  const id = (P || {}).background;
+  if (!id || id === 'none') return '';
+  if (id === 'custom') return '/api/me/background?v=' + Date.now();
+  return '/static/bg/' + id + '.jpg';
+}
+
+function applyBackground(P) {
+  const layer = document.getElementById('bgLayer');
+  if (!layer) return;
+  const url = bgUrl(P);
+  const on = !!url && P.bg_enabled !== false;
+  layer.style.display = on ? 'block' : 'none';
+  if (on) {
+    layer.style.backgroundImage = `url("${url}")`;
+    layer.style.filter = `blur(${Number(P.bg_blur) || 0}px)`;
+    layer.style.setProperty('--bg-dim', String((Number(P.bg_dim ?? 35)) / 100));
+  }
+  document.documentElement.setAttribute('data-bg', on ? 'on' : 'off');
+}
+
+function downscaleImage(file, maxSide, quality) {
+  return new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onerror = () => reject(new Error('Could not read that file'));
+    fr.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error('That file is not an image'));
+      img.onload = () => {
+        const scale = Math.min(1, maxSide / Math.max(img.width, img.height));
+        const cv = document.createElement('canvas');
+        cv.width = Math.max(1, Math.round(img.width * scale));
+        cv.height = Math.max(1, Math.round(img.height * scale));
+        cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
+        resolve(cv.toDataURL('image/jpeg', quality));
+      };
+      img.src = fr.result;
+    };
+    fr.readAsDataURL(file);
+  });
+}
+
+async function uploadBackground(file) {
+  if (!file) return;
+  try {
+    toast(T('uploading'), '');
+    const dataUrl = await downscaleImage(file, 1920, 0.82);
+    const r = await api('POST', '/api/me/background', { data: dataUrl });
+    toast(`${T('bgUploaded')} (${Math.round(r.bytes / 1024)} KB)`, 'ok');
+    APPR.background = 'custom';
+    APPR.bg_enabled = true;
+    await persistAppearance();
+    render();
+  } catch (e) {
+    toast(e.message, 'bad');
+  }
+}
+
+async function removeBackground() {
+  try {
+    await api('DELETE', '/api/me/background');
+    if (APPR) APPR.background = 'none';
+    toast(T('bgRemoved'), 'ok');
+    await persistAppearance();
+    render();
+  } catch (e) { toast(e.message, 'bad'); }
+}
+
+async function persistAppearance() {
+  Object.assign(S.prefs, APPR);
+  applyPrefs(S.prefs);
+  try { await api('POST', '/api/me/prefs', S.prefs); toast(T('appearanceSaved'), 'ok'); }
+  catch (e) { toast(e.message, 'bad'); }
+}
+
+function resetAppearance() {
+  Object.assign(APPR, { language: 'en', theme: 'dark-green', style: 'solid', font: 'inter',
+    music: 'off', music_volume: 40, background: 'none', bg_dim: 35, bg_blur: 0, bg_enabled: true });
+  applyPrefs(APPR);
+  render();
+  toast(T('appearanceReset'), 'ok');
+}
+
+function bgOptionsHtml() {
+  const cur = (APPR || {}).background || 'none';
+  const presets = (S.bgPresets || []).map((p) => `
+    <div class="bg-thumb ${cur === p.id ? 'on' : ''}" data-bg-pick="${esc(p.id)}"
+         style="background-image:url('${esc(p.url)}')"><span>${esc(p.id)}</span></div>`).join('');
+  const custom = S.bgCustom ? `
+    <div class="bg-thumb ${cur === 'custom' ? 'on' : ''}" data-bg-pick="custom"
+         style="background-image:url('/api/me/background?v=${Date.now()}')"><span>${T('bgCustom')}</span></div>` : '';
+  return `<div class="bg-thumb none ${cur === 'none' ? 'on' : ''}" data-bg-pick="none">${T('bgNone')}</div>${custom}${presets}`;
 }
 async function savePrefs(patch) {
   Object.assign(S.prefs, patch);
@@ -263,6 +381,7 @@ const isOwner = () => !!(S.me && S.me.role === 'owner');
 function buildShell() {
   const el = $('root');
   el.innerHTML = `
+  <div class="bg-layer" id="bgLayer" style="display:none"></div>
   <div class="shell">
     <aside class="sidebar">
       <div class="brand">
@@ -306,10 +425,13 @@ function goto(page) {
 
 /* ------------------------------------------------------------------ data */
 async function loadAll() {
-  const [me, summary, settings, protocols, inbounds, clients] = await Promise.all([
+  const [me, summary, settings, protocols, inbounds, clients, backgrounds] = await Promise.all([
     api('GET', '/api/me'), api('GET', '/api/summary'), api('GET', '/api/settings'),
     api('GET', '/api/protocols'), api('GET', '/api/inbounds'), api('GET', '/api/clients'),
+    api('GET', '/api/backgrounds'),
   ]);
+  S.bgPresets = (backgrounds && backgrounds.presets) || [];
+  S.bgCustom = !!(backgrounds && backgrounds.custom);
   S.me = me;
   S.summary = summary;
   S.settings = settings.settings || {};
@@ -438,7 +560,7 @@ function inboundCard(ib) {
     </div>
     <div class="ib-kv">
       <div><div class="lbl">${T('clients')}</div><b>${ib.client_count == null ? 0 : ib.client_count}</b></div>
-      <div><div class="lbl">${T('traffic')}</div><b>${esc(ib.used_human || '0 B')}${ib.limit_bytes ? ' / ' + esc(ib.limit_human) : ''}</b></div>
+      <div><div class="lbl">${T('traffic')}</div><b>${T('downShort')} ${esc(ib.down_human || '0 B')} &nbsp; ${T('upShort')} ${esc(ib.up_human || '0 B')}${ib.limit_bytes ? ' / ' + esc(ib.limit_human) : ''}</b></div>
       <div><div class="lbl">${T('expiry')}</div><b>${esc(shortDate(ib.expires_at))}</b></div>
       <div><div class="lbl">${T('status')}</div><b>${ib.enabled ? T('active') : T('disabled')}</b></div>
     </div>
@@ -446,7 +568,7 @@ function inboundCard(ib) {
     <div class="ib-foot">
       <button class="btn sm" data-act="toggle" data-id="${esc(ib.id)}">${ib.enabled ? T('disable') : T('enable')}</button>
       <button class="btn sm" data-act="clients" data-id="${esc(ib.id)}">${T('clients')}</button>
-      <button class="btn sm" data-act="subpage" data-id="${esc(ib.id)}">${T('openSub')}</button>
+      <button class="btn sm" data-act="ping" data-id="${esc(ib.id)}">${T('ping')}</button>
       <button class="btn sm" data-act="regenerate" data-id="${esc(ib.id)}">${T('newSecret')}</button>
       <span class="grow"></span>
       <button class="btn sm danger" data-act="delete" data-id="${esc(ib.id)}">${T('del')}</button>
@@ -517,6 +639,11 @@ async function inboundAction(act, id) {
   if (act === 'clients') { S.clientsIb = id; goto('clients'); return; }
   if (act === 'subpage') return window.open(`/info/${ib.sub_token}`, '_blank');
   if (act === 'toggle') { await api('POST', `/api/inbounds/${id}/toggle`); return loadAll(); }
+  if (act === 'ping') {
+    const r = await api('POST', `/api/inbounds/${id}/ping`);
+    toast(r.ok ? `${T('latency')} ${r.host}:${r.port} → ${r.latency_ms} ms` : `Ping: ${r.error}`, r.ok ? 'ok' : 'bad');
+    return;
+  }
   if (act === 'regenerate') {
     if (!(await confirmAsync(T('newSecret'), T('confirmTitle')))) return;
     await api('POST', `/api/inbounds/${id}/regenerate`);
@@ -542,94 +669,40 @@ const B = { proto: 'vless', net: 'ws', sec: 'tls' };
 
 function openBuilder(ib) {
   const editing = !!ib;
-  B.proto = (ib && ib.protocol) || 'vless';
-  B.net = (ib && ib.network) || 'ws';
-  B.sec = (ib && ib.security) || 'tls';
   const b = ib || { port: (S.settings && S.settings.default_port) || 443, fingerprint: 'chrome', config_count: 1, enabled: 1 };
+  const opt = (id, label, pairs, val) => `<label class="field"><span>${label}</span><select id="${id}">${
+    pairs.map((p) => `<option value="${p[0]}" ${String(val) === String(p[0]) ? 'selected' : ''}>${p[1]}</option>`).join('')}</select></label>`;
 
   const body = `<div class="builder">
-    <section>
-      <div class="ib-step"><span class="num">1</span><div><b>${T('step1')}</b><small>${T('step1s')}</small></div></div>
-      <div class="ib-matrix">
-        ${optCard('proto', 'vless', 'VLESS', 'UUID · native', '◈', B.proto === 'vless')}
-        ${optCard('proto', 'vmess', 'VMess', 'UUID · bridge', '◇', B.proto === 'vmess')}
-        ${optCard('proto', 'trojan', 'Trojan', 'Password · native', '◆', B.proto === 'trojan')}
-        ${optCard('proto', 'shadowsocks', 'Shadowsocks', 'AEAD · bridge', '◉', B.proto === 'shadowsocks')}
-      </div>
-    </section>
-    <section class="ib-section">
-      <div class="ib-step"><span class="num">2</span><div><b>${T('step2')}</b><small>${T('step2s')}</small></div></div>
-      <div class="ib-matrix">
-        ${optCard('net', 'ws', 'WebSocket', 'Railway HTTPS port', '≋', B.net === 'ws')}
-        ${optCard('net', 'xhttp', 'XHTTP', 'Path-based HTTP', '⇄', B.net === 'xhttp')}
-        ${optCard('net', 'grpc', 'gRPC', 'gRPC transport', '⋮⋮', B.net === 'grpc')}
-        ${optCard('net', 'tcp', 'TCP', 'Raw + header', '≡', B.net === 'tcp')}
-      </div>
-      <div class="ib-note" style="margin-top:11px" id="netNote"></div>
-    </section>
-    <section class="ib-section">
-      <div class="ib-step"><span class="num">3</span><div><b>${T('step3')}</b><small>${T('step3s')}</small></div></div>
-      <div class="ib-matrix">
-        ${optCard('sec', 'tls', 'TLS', 'Standard TLS', '🔒', B.sec === 'tls')}
-        ${optCard('sec', 'reality', 'Reality', 'Public-key mode', '🗝', B.sec === 'reality')}
-        ${optCard('sec', 'none', 'None', 'No TLS wrapper', '🔓', B.sec === 'none')}
-      </div>
-      <div class="ib-note" style="margin-top:11px" id="secNote"></div>
-    </section>
-    <section class="ib-section">
-      <div class="ib-step"><span class="num">4</span><div><b>${T('step4')}</b><small>${T('step4s')}</small></div></div>
-      <div class="form-grid">
-        <label class="field"><span>${T('fName')}</span><input id="bName" value="${esc(b.name || '')}" placeholder="Frankfurt-01"></label>
-        <label class="field"><span>${T('fAddress')}</span><input id="bAddress" value="${esc(b.address || '')}" placeholder="panel.up.railway.app"></label>
-        <label class="field"><span>${T('fPort')}</span><input id="bPort" type="number" min="1" max="65535" value="${esc(b.port || 443)}"></label>
-        <label class="field"><span>${T('fFp')}</span><select id="bFp">${FP_CHOICES.map((f) => `<option ${b.fingerprint === f ? 'selected' : ''}>${f}</option>`).join('')}</select></label>
-        <label class="field" id="grpPath"><span>${T('fPath')}</span><input id="bPath" value="${esc(b.path || '')}" placeholder="/ws/…"></label>
-        <label class="field" id="grpHost"><span>${T('fHost')}</span><input id="bHost" value="${esc(b.host_header || '')}"></label>
-        <label class="field" id="grpXhttp"><span>${T('fXhttp')}</span><select id="bXhttpMode">${['packet-up', 'stream-up', 'stream-one', 'auto'].map((m) => `<option ${(b.xhttp_mode || 'packet-up') === m ? 'selected' : ''}>${m}</option>`).join('')}</select></label>
-        <label class="field" id="grpGrpcSvc"><span>${T('fGrpcSvc')}</span><input id="bGrpcService" value="${esc(b.grpc_service_name || '')}"></label>
-        <label class="field" id="grpGrpcMode"><span>${T('fGrpcMode')}</span><select id="bGrpcMode">${['gun', 'multi'].map((m) => `<option ${(b.grpc_mode || 'gun') === m ? 'selected' : ''}>${m}</option>`).join('')}</select></label>
-        <label class="field" id="grpHeader"><span>${T('fHeader')}</span><select id="bHeaderType">${['none', 'http'].map((m) => `<option ${(b.header_type || 'none') === m ? 'selected' : ''}>${m}</option>`).join('')}</select></label>
-        <label class="field" id="grpFlow"><span>${T('fFlow')}</span><select id="bFlow"><option value=""></option><option value="xtls-rprx-vision" ${b.flow === 'xtls-rprx-vision' ? 'selected' : ''}>xtls-rprx-vision</option></select></label>
-        <label class="field" id="grpSni"><span>${T('fSni')}</span><input id="bSni" value="${esc(b.sni || '')}"></label>
-        <label class="field" id="grpAlpn"><span>${T('fAlpn')}</span><input id="bAlpn" value="${esc(b.alpn || 'h2,http/1.1')}"></label>
-        <label class="field" id="grpAllow"><span>${T('fAllow')}</span><span class="chk"><input type="checkbox" id="bAllowInsecure" ${b.allow_insecure ? 'checked' : ''}> skip-cert-verify</span></label>
-        <label class="field" id="grpFragment"><span>${T('fFragment')}</span><input id="bFragment" value="${esc(b.fragment || '')}"></label>
-        <div class="field span-2" id="grpReality"><span>${T('fReality')}</span>
-          <div class="form-grid">
-            <label class="field"><span>${T('fRealitySni')}</span><input id="bRealitySni" value="${esc(b.sni || '')}"></label>
-            <label class="field"><span>${T('fPbk')}</span><input id="bRealityPbk" value="${esc(b.reality_public_key || '')}"></label>
-            <label class="field"><span>${T('fSid')}</span><input id="bRealitySid" value="${esc(b.reality_short_id || '')}"></label>
-            <label class="field"><span>${T('fSpx')}</span><input id="bRealitySpx" value="${esc(b.reality_spider_x || '/')}"></label>
-          </div>
-        </div>
-        <div class="field span-2" id="grpShadow"><span>${T('fSs')}</span>
-          <div class="form-grid">
-            <label class="field"><span>${T('fSsMethod')}</span><select id="bSsMethod">${(S.protocols.ss_methods || ['chacha20-ietf-poly1305']).map((m) => `<option ${b.ss_method === m ? 'selected' : ''}>${m}</option>`).join('')}</select></label>
-            <label class="field"><span>${T('fSsPass')}</span><input id="bSsPassword" value="${esc(b.ss_password || '')}"></label>
-          </div>
-        </div>
-      </div>
-    </section>
-    <section class="ib-section">
-      <div class="ib-step"><span class="num">5</span><div><b>${T('step5')}</b><small>${T('step5s')}</small></div></div>
-      <div class="form-grid">
-        <label class="field"><span>${T('fLimit')}</span><input id="bLimitGb" type="number" min="0" value="${b.limit_bytes ? Math.round(b.limit_bytes / 1073741824) : ''}" placeholder="0"></label>
-        <label class="field"><span>${T('fDays')}</span><input id="bDays" type="number" min="0" value="${b.expires_at ? Math.max(0, Math.ceil((new Date(b.expires_at) - Date.now()) / 86400000)) : ''}" placeholder="0"></label>
-        <label class="field"><span>${T('fExpires')}</span><input id="bExpiresAt" type="datetime-local" value="${b.expires_at ? new Date(b.expires_at).toISOString().slice(0, 16) : ''}"></label>
-        <label class="field"><span>${T('fClientLimit')}</span><input id="bClientLimit" type="number" min="0" value="${esc(b.client_limit || 0)}"></label>
-        <label class="field"><span>${T('fIpLimit')}</span><input id="bIpLimit" type="number" min="0" value="${esc(b.ip_limit || 0)}"></label>
-        <label class="field"><span>${T('fConnLimit')}</span><input id="bConnLimit" type="number" min="0" value="${esc(b.connection_limit || 0)}"></label>
-        <label class="field"><span>${T('fCount')}</span><input id="bConfigCount" type="number" min="1" max="40" value="${esc(b.config_count || 1)}"></label>
-        <label class="field"><span>${T('fSpeed')}</span><input id="bSpeed" type="number" min="0" value="${esc(b.speed_limit_mbps || 0)}"></label>
-        <label class="field span-2"><span>${T('fNote')}</span><input id="bNote" value="${esc(b.note || '')}"></label>
-        <label class="field"><span>${T('fEnabled')}</span><span class="chk"><input type="checkbox" id="bEnabled" ${b.enabled === 0 || b.enabled === false ? '' : 'checked'}> ${T('enabledLbl')}</span></label>
-      </div>
-      <div class="summary-strip" id="bSummary" style="margin-top:14px"></div>
-      <div class="live-preview" style="margin-top:10px"><code id="bPreview"></code></div>
-    </section>
+    <div class="form-grid">
+      ${opt('bProto', T('protocol'), [['vless', 'VLESS'], ['vmess', 'VMess'], ['trojan', 'Trojan'], ['shadowsocks', 'Shadowsocks']], b.protocol || 'vless')}
+      ${opt('bNet', T('transport'), [['ws', 'WebSocket'], ['xhttp', 'XHTTP'], ['grpc', 'gRPC'], ['tcp', 'TCP']], b.network || 'ws')}
+      ${opt('bSec', T('security'), [['tls', 'TLS'], ['reality', 'Reality'], ['none', 'None']], b.security || 'tls')}
+      ${opt('bFp', T('fFp'), FP_CHOICES.map((f) => [f, f]), b.fingerprint || 'chrome')}
+    </div>
+
+    <div class="form-grid" style="margin-top:12px">
+      <label class="field"><span>${T('fName')}</span><input id="bName" value="${esc(b.name || '')}" placeholder="Frankfurt-01"></label>
+      <label class="field"><span>${T('fAddress')}</span><input id="bAddress" value="${esc(b.address || '')}" placeholder="panel.up.railway.app"></label>
+      <label class="field"><span>${T('fPort')}</span><input id="bPort" type="number" min="1" max="65535" value="${esc(b.port || 443)}"></label>
+      <label class="field" id="grpPath"><span>${T('fPath')}</span><input id="bPath" value="${esc(b.path || '')}" placeholder="/ws/x (empty = auto)"></label>
+    </div>
+
+    <div class="form-grid" style="margin-top:12px">
+      <label class="field"><span>${T('fLimit')}</span><input id="bLimitGb" type="number" min="0" value="${b.limit_bytes ? Math.round(b.limit_bytes / 1073741824) : ''}" placeholder="0"></label>
+      <label class="field"><span>${T('fDays')}</span><input id="bDays" type="number" min="0" value="${b.expires_at ? Math.max(0, Math.ceil((new Date(b.expires_at) - Date.now()) / 86400000)) : ''}" placeholder="0"></label>
+      <label class="field"><span>${T('fCount')}</span><input id="bConfigCount" type="number" min="1" max="40" value="${esc(b.config_count || 1)}"></label>
+      <label class="field"><span>${T('fClientLimit')}</span><input id="bClientLimit" type="number" min="0" value="${esc(b.client_limit || 0)}"></label>
+    </div>
+
+    <div class="field" style="margin-top:12px"><span>${T('fNote')}</span><input id="bNote" value="${esc(b.note || '')}"></div>
+    <label class="chk" style="margin-top:12px"><input type="checkbox" id="bEnabled" ${b.enabled === 0 || b.enabled === false ? '' : 'checked'}> ${T('enabledLbl')}</label>
+
+    <div class="summary-strip" id="bSummary" style="margin-top:14px"></div>
+    <div class="live-preview" style="margin-top:10px"><code id="bPreview"></code></div>
+    <p class="muted" id="bWarn" style="margin-top:10px;font-size:10.5px"></p>
   </div>
   <div class="modal-foot">
-    <span class="muted" id="bWarn" style="font-size:10.5px"></span>
     <span class="grow"></span>
     <button class="btn" id="bCancel">${T('cancel')}</button>
     <button class="btn primary" id="bSave">${editing ? T('editInbound') : T('createInbound')}</button>
@@ -638,66 +711,34 @@ function openBuilder(ib) {
   openModal(editing ? T('editInbound') : T('createInbound'), body);
   $('bCancel').onclick = closeModal;
   $('bSave').onclick = () => saveInbound(editing ? ib.id : null);
-  $$('[data-proto]').forEach((el) => (el.onclick = () => { B.proto = el.dataset.proto; syncBuilder(); }));
-  $$('[data-net]').forEach((el) => (el.onclick = () => { B.net = el.dataset.net; syncBuilder(); }));
-  $$('[data-sec]').forEach((el) => (el.onclick = () => { B.sec = el.dataset.sec; syncBuilder(); }));
-  ['bName', 'bAddress', 'bPort', 'bPath', 'bHost', 'bConfigCount', 'bDays', 'bLimitGb'].forEach((id) => {
-    const el = $(id); if (el) el.addEventListener('input', builderSummary);
+  ['bName', 'bAddress', 'bPort', 'bPath', 'bConfigCount', 'bDays', 'bLimitGb',
+   'bProto', 'bNet', 'bSec', 'bFp'].forEach((id) => {
+    const el = $(id);
+    if (el) el.addEventListener(el.tagName === 'SELECT' ? 'change' : 'input', syncBuilder);
   });
   syncBuilder();
 }
 
-function show(id, on) { const el = $(id); if (el) el.style.display = on ? '' : 'none'; }
-
 function syncBuilder() {
-  $$('[data-proto]').forEach((el) => el.classList.toggle('on', el.dataset.proto === B.proto));
-  $$('[data-net]').forEach((el) => el.classList.toggle('on', el.dataset.net === B.net));
-  $$('[data-sec]').forEach((el) => el.classList.toggle('on', el.dataset.sec === B.sec));
-  const net = B.net, sec = B.sec, proto = B.proto;
+  const net = ($('bNet') || {}).value || 'ws';
   show('grpPath', net === 'ws' || net === 'xhttp');
-  show('grpHost', net === 'ws' || net === 'xhttp');
-  show('grpXhttp', net === 'xhttp');
-  show('grpGrpcSvc', net === 'grpc');
-  show('grpGrpcMode', net === 'grpc');
-  show('grpHeader', net === 'tcp');
-  show('grpFlow', net === 'tcp' || proto === 'vless');
-  show('grpSni', sec !== 'none');
-  show('grpAlpn', sec === 'tls');
-  show('grpAllow', sec === 'tls');
-  show('grpFragment', sec !== 'none');
-  show('grpReality', sec === 'reality');
-  show('grpShadow', proto === 'shadowsocks');
-  const notes = {
-    ws: 'WebSocket over the single Railway HTTPS port — nothing else to open.',
-    xhttp: 'XHTTP is path-based and also rides the HTTPS port.',
-    grpc: 'gRPC rides the HTTPS port; the client must support gRPC.',
-    tcp: 'Raw TCP is not exposed by Railway (one HTTPS port only).',
-  };
-  const sn = $('netNote'); if (sn) sn.textContent = T('vlessNote') + ' ' + (notes[net] || '');
-  const ss = $('secNote');
-  if (ss) ss.textContent = sec === 'tls' ? 'Railway terminates TLS on your domain; keep the SNI equal to it.' : sec === 'reality' ? 'Reality must be terminated by an Xray node — configs are still generated.' : 'No TLS: only behind your own TLS terminator.';
-  const native = proto === 'vless' || proto === 'trojan';
+  const proto = ($('bProto') || {}).value || 'vless';
   const w = $('bWarn');
-  if (w) w.textContent = native ? T('vlessNote') : T('bridgeNote');
+  if (w) {
+    w.textContent = (proto === 'vless' || proto === 'trojan') ? T('vlessNote') : T('bridgeNote');
+    w.style.color = (proto === 'vless' || proto === 'trojan') ? 'var(--muted)' : 'var(--warning)';
+  }
   builderSummary();
 }
 
 function builderPayload() {
   const g = (id) => { const el = $(id); return el ? el.value : ''; };
-  const at = g('bExpiresAt');
   return {
-    name: g('bName'), protocol: B.proto, network: B.net, security: B.sec,
-    address: g('bAddress'), port: g('bPort'), path: g('bPath'), host_header: g('bHost'),
-    sni: B.sec === 'reality' ? (g('bRealitySni') || g('bSni')) : g('bSni'),
-    alpn: g('bAlpn'), fingerprint: g('bFp'), flow: g('bFlow'),
-    grpc_service_name: g('bGrpcService'), grpc_mode: g('bGrpcMode'), xhttp_mode: g('bXhttpMode'),
-    header_type: g('bHeaderType'), allow_insecure: $('bAllowInsecure') ? $('bAllowInsecure').checked : false,
-    reality_public_key: g('bRealityPbk'), reality_short_id: g('bRealitySid'), reality_spider_x: g('bRealitySpx') || '/',
-    ss_method: g('bSsMethod'), ss_password: g('bSsPassword'), fragment: g('bFragment'),
-    limit_value: g('bLimitGb'), expires_days: g('bDays'), expires_at: at ? new Date(at).toISOString() : '',
-    ip_limit: g('bIpLimit'), connection_limit: g('bConnLimit'), client_limit: g('bClientLimit'),
-    config_count: g('bConfigCount'), speed_limit_mbps: g('bSpeed'), note: g('bNote'),
-    enabled: $('bEnabled') ? $('bEnabled').checked : true,
+    name: g('bName'), protocol: g('bProto'), network: g('bNet'), security: g('bSec'),
+    address: g('bAddress'), port: g('bPort'), path: g('bPath'), fingerprint: g('bFp'),
+    limit_value: g('bLimitGb'), expires_days: g('bDays'),
+    client_limit: g('bClientLimit'), config_count: g('bConfigCount'),
+    note: g('bNote'), enabled: $('bEnabled') ? $('bEnabled').checked : true,
   };
 }
 
@@ -736,7 +777,7 @@ async function showInboundConfig(ib) {
       <div class="cc-head"><span class="cc-name">${esc(c.name)}</span>
         <span class="badge ${c.active ? 'ok' : 'bad'}">${c.active ? T('active') : T('disabled')}</span>
         <span class="cc-grow"></span>
-        <button class="btn sm" data-copy="${esc(c.sub_url)}">${T('copySub')}</button></div>
+        <button class="btn sm" data-copy="${esc(c.link || '')}">${T('copy')}</button></div>
       <div class="bar"><i style="width:${c.usage_pct}%"></i></div>
       <div class="kv-line"><span>${T('ov_traffic')} <b>${esc(c.used_human)}</b>${c.limit_bytes ? ' / ' + esc(c.limit_human) : ''}</span>
         <span>${T('expiry')} <b>${esc(shortDate(c.expires_at))}</b></span></div>
@@ -745,12 +786,6 @@ async function showInboundConfig(ib) {
   openModal(ib.name, `
     <div class="summary-strip"><b>${esc((ib.protocol || '').toUpperCase())}</b> · ${esc((ib.network || '').toUpperCase())} · ${esc((ib.security || '').toUpperCase())}
       &nbsp;→&nbsp; ${esc(ib.address || '')}:${esc(ib.port)} · ${T('path')} <code>${esc(ib.path)}</code></div>
-    <div class="toolbar" style="margin:12px 0">
-      <button class="btn sm" data-copy="${esc(sub)}">${T('copySub')}</button>
-      <button class="btn sm" id="cfgOpen">${T('openSub')}</button>
-      <button class="btn sm" id="cfgClash">${T('copyClash')}</button>
-      <button class="btn sm" id="cfgSing">${T('copySingbox')}</button>
-    </div>
     <div class="card" style="margin-bottom:12px">
       <div class="lbl" style="font-size:8.5px;letter-spacing:1.2px;color:var(--muted);text-transform:uppercase">${T('selfNode')}</div>
       <div class="cc-link" style="margin-top:7px"><code>${esc(self || '—')}</code></div>
@@ -759,10 +794,7 @@ async function showInboundConfig(ib) {
     <div class="sub-grid">${cards || `<div class="empty"><b>${T('apiNoClients') || 'No clients'}</b>${T('selfNodeHint')}</div>`}</div>
     <div class="modal-foot"><span class="grow"></span><button class="btn" id="cfgClose">${T('close')}</button></div>`);
   $('cfgClose').onclick = closeModal;
-  $('cfgOpen').onclick = () => window.open(`/info/${ib.sub_token}`, '_blank');
   $$('[data-copy]').forEach((b) => (b.onclick = () => copyText(b.dataset.copy)));
-  $('cfgClash').onclick = async () => copyText(await (await fetch(`/sub/${ib.sub_token}?target=clash`)).text());
-  $('cfgSing').onclick = async () => copyText(await (await fetch(`/sub/${ib.sub_token}?target=singbox`)).text());
 }
 
 /* ================================================================== CLIENTS */
@@ -789,14 +821,18 @@ function pageClients(view) {
     </div>
     <div class="tblwrap">
       ${list.length ? `<table>
-        <thead><tr><th>${T('name')}</th><th>${T('status')}</th><th>${T('traffic')}</th><th>${T('expiry')}</th><th>${T('actions')}</th></tr></thead>
+        <thead><tr><th>${T('name')}</th><th>${T('status')}</th><th>${T('ping')}</th><th>${T('download')}</th><th>${T('upload')}</th><th>${T('traffic')}</th><th>${T('expiry')}</th><th>${T('actions')}</th></tr></thead>
         <tbody>${list.map((c) => `<tr>
           <td><b style="font-weight:700">${esc(c.name)}</b><span class="sub mono">${esc(c.uuid)}</span></td>
           <td><span class="badge ${c.expired ? 'bad' : !c.enabled ? '' : c.over_quota ? 'warn' : 'ok'}">${c.expired ? T('expired') : !c.enabled ? T('disabled') : c.over_quota ? T('quota') : T('active')}</span></td>
+          <td class="mono muted" id="ping-${esc(c.id)}">—</td>
+          <td class="mono">${T('downShort')} ${esc(c.down_human || '0 B')}</td>
+          <td class="mono">${T('upShort')} ${esc(c.up_human || '0 B')}</td>
           <td style="min-width:130px"><span class="sub">${esc(c.used_human)}${c.limit_bytes ? ' / ' + esc(c.limit_human) : ' / ∞'}</span>
             <div class="bar"><i style="width:${c.limit_bytes ? Math.min(100, c.usage_pct) : 0}%"></i></div></td>
           <td class="muted">${esc(shortDate(c.expires_at))}</td>
           <td><div style="display:flex;gap:5px;flex-wrap:wrap">
+            <button class="btn sm" data-cact="ping" data-id="${esc(c.id)}">${T('ping')}</button>
             <button class="btn sm" data-cact="links" data-id="${esc(c.id)}">${T('config')}</button>
             <button class="btn sm" data-cact="toggle" data-id="${esc(c.id)}">${c.enabled ? T('disable') : T('enable')}</button>
             <button class="btn sm danger" data-cact="delete" data-id="${esc(c.id)}">${T('del')}</button>
@@ -815,6 +851,7 @@ function pageClients(view) {
 async function clientAction(act, id) {
   const c = S.clients.find((x) => x.id === id);
   if (!c) return;
+  if (act === 'ping') return pingClient(id);
   if (act === 'links') return showClientLinks(c);
   if (act === 'toggle') { await api('PATCH', `/api/clients/${id}`, { enabled: !c.enabled }); return loadAll(); }
   if (act === 'delete') {
@@ -857,6 +894,23 @@ function openClientDrawer(ib) {
       loadAll();
     } catch (e) { toast(e.message, 'bad'); }
   };
+}
+
+async function pingClient(id) {
+  const cell = $('ping-' + id);
+  const buttons = Array.from(document.querySelectorAll(`[data-cact="ping"][data-id="${id}"]`));
+  buttons.forEach((b) => (b.disabled = true));
+  if (cell) cell.textContent = '…';
+  try {
+    const r = await api('POST', `/api/clients/${id}/ping`);
+    if (cell) cell.textContent = r.ok ? `${r.latency_ms} ms` : 'timeout';
+    toast(r.ok ? `${T('latency')} ${r.host}:${r.port} → ${r.latency_ms} ms` : `Ping: ${r.error}`, r.ok ? 'ok' : 'bad');
+  } catch (e) {
+    if (cell) cell.textContent = '—';
+    toast(e.message, 'bad');
+  } finally {
+    buttons.forEach((b) => (b.disabled = false));
+  }
 }
 
 function showClientLinks(c) {
@@ -986,23 +1040,49 @@ function pageSettings(view) {
         <p class="muted" style="font-size:10.5px;margin-bottom:11px">${T('appearanceNote')}</p>
         <div class="form-grid">
           <label class="field"><span>${T('language')}</span>
-            <select id="sLang"><option value="en" ${LANG === 'en' ? 'selected' : ''}>English</option>
-            <option value="fa" ${LANG === 'fa' ? 'selected' : ''}>فارسی</option></select></label>
+            <select id="sLang"><option value="en" ${APPR.language === 'en' ? 'selected' : ''}>English</option>
+            <option value="fa" ${APPR.language === 'fa' ? 'selected' : ''}>فارسی</option></select></label>
           <label class="field"><span>${T('uiStyle')}</span>
-            <select id="sStyle"><option value="solid" ${S.prefs.style !== 'glass' ? 'selected' : ''}>${T('solid')}</option>
-            <option value="glass" ${S.prefs.style === 'glass' ? 'selected' : ''}>${T('glass')}</option></select></label>
+            <select id="sStyle"><option value="solid" ${APPR.style !== 'glass' ? 'selected' : ''}>${T('solid')}</option>
+            <option value="glass" ${APPR.style === 'glass' ? 'selected' : ''}>${T('glass')}</option></select></label>
+          <label class="field span-2"><span>${T('fontFamily')}</span>
+            <select id="sFont">${FONTS_LIST.map(([id, label]) => `<option value="${id}" ${APPR.font === id ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
         </div>
         <div class="field" style="margin-top:12px"><span>${T('theme')}</span>
           <div style="display:flex;gap:9px;flex-wrap:wrap" id="themeRow">
-            ${THEMES.map(([id, col]) => `<button class="btn sm" data-theme-pick="${id}" style="border-color:${S.prefs.theme === id ? col : 'var(--line)'}">
+            ${THEMES.map(([id, col]) => `<button class="btn sm" data-theme-pick="${id}" style="border-color:${APPR.theme === id ? col : 'var(--line)'}">
               <span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${col};margin-inline-end:6px"></span>${id.replace('dark-', '')}</button>`).join('')}
           </div></div>
         <div class="field" style="margin-top:12px"><span>${T('music')}</span>
           <div class="music-row">
-            <label class="chk"><input type="checkbox" id="sMusic" ${S.prefs.music === 'on' ? 'checked' : ''}> ${T('musicOn')}</label>
-            <input type="range" id="sVol" min="0" max="100" value="${esc(S.prefs.music_volume || 40)}">
-            <span class="muted" id="volVal">${esc(S.prefs.music_volume || 40)}</span>
+            <label class="chk"><input type="checkbox" id="sMusic" ${APPR.music === 'on' ? 'checked' : ''}> ${T('musicOn')}</label>
+            <input type="range" id="sVol" min="0" max="100" value="${esc(APPR.music_volume || 40)}">
+            <span class="muted" id="volVal">${esc(APPR.music_volume || 40)}</span>
           </div></div>
+
+        <div class="field" style="margin-top:14px"><span>${T('background')}</span>
+          <div class="bg-grid" id="bgGrid">${bgOptionsHtml()}</div>
+          <div class="range-row" style="margin-top:10px">
+            <span class="muted" style="font-size:10px;min-width:52px">${T('bgDim')}</span>
+            <input type="range" id="sDim" min="0" max="80" value="${Number(APPR.bg_dim ?? 35)}">
+            <span class="val" id="dimVal">${Number(APPR.bg_dim ?? 35)}%</span></div>
+          <div class="range-row" style="margin-top:6px">
+            <span class="muted" style="font-size:10px;min-width:52px">${T('bgBlur')}</span>
+            <input type="range" id="sBlur" min="0" max="20" value="${Number(APPR.bg_blur ?? 0)}">
+            <span class="val" id="blurVal">${Number(APPR.bg_blur ?? 0)}px</span></div>
+          <div class="toolbar" style="margin-top:10px">
+            <label class="btn sm" style="cursor:pointer">${T('uploadBg')}
+              <input type="file" id="bgFile" accept="image/*" style="display:none"></label>
+            <button class="btn sm danger" id="bgRemove">${T('removeBg')}</button>
+            <label class="chk" style="margin-inline-start:8px"><input type="checkbox" id="bgEnabled" ${APPR.bg_enabled !== false ? 'checked' : ''}> ${T('bgEnabled')}</label>
+          </div>
+          <p class="muted" style="font-size:10px;margin-top:8px">${T('bgPerUser')}</p>
+        </div>
+
+        <div class="toolbar" style="margin-top:14px">
+          <button class="btn primary" id="apprSave">${T('saveAppearance')}</button>
+          <button class="btn" id="apprReset">${T('resetAppearance')}</button>
+        </div>
       </div>
 
       <div class="card">
@@ -1021,7 +1101,6 @@ function pageSettings(view) {
       <div class="card">
         <div class="card-head"><h2>${T('settingsPanel')}</h2>${owner ? '' : `<span class="badge warn">${T('ownerOnly')}</span>`}</div>
         ${owner ? `<div class="form-grid">
-          <label class="field span-2"><span>${T('panelName')}</span><input id="sName" value="${esc(S.settings.panel_name || '')}"></label>
           <label class="field span-2"><span>${T('publicBaseUrl')}</span><input id="sBase" value="${esc(S.settings.public_base_url || '')}" placeholder="https://your-app.up.railway.app"></label>
           <label class="field"><span>${T('defaultPort')}</span><input id="sPort" value="${esc(S.settings.default_port || '443')}"></label>
         </div>
@@ -1047,12 +1126,22 @@ function pageSettings(view) {
         <div id="diagBox2"><p class="muted"><span class="spin"></span></p></div></div>`}
     </div>`;
 
-  $('sLang').onchange = (e) => savePrefs({ language: e.target.value });
-  $('sStyle').onchange = (e) => savePrefs({ style: e.target.value });
-  $$('[data-theme-pick]').forEach((b) => (b.onclick = () => savePrefs({ theme: b.dataset.themePick })));
-  $('sMusic').onchange = (e) => savePrefs({ music: e.target.checked ? 'on' : 'off' });
+  APPR = Object.assign({}, BG_DEFAULTS, S.prefs);
+  $('sLang').onchange = (e) => { APPR.language = e.target.value; applyPrefs(APPR); };
+  $('sStyle').onchange = (e) => { APPR.style = e.target.value; applyPrefs(APPR); };
+  $('sFont').onchange = (e) => { APPR.font = e.target.value; applyPrefs(APPR); };
+  $$('[data-theme-pick]').forEach((b) => (b.onclick = () => { APPR.theme = b.dataset.themePick; applyPrefs(APPR); render(); }));
+  $('sMusic').onchange = (e) => { APPR.music = e.target.checked ? 'on' : 'off'; applyPrefs(APPR); };
   $('sVol').oninput = (e) => { $('volVal').textContent = e.target.value; if (Music.el) Music.el.volume = Math.min(1, Math.max(0, e.target.value / 100)); };
-  $('sVol').onchange = (e) => savePrefs({ music_volume: Number(e.target.value) });
+  $('sVol').onchange = (e) => { APPR.music_volume = Number(e.target.value); };
+  $('sDim').oninput = (e) => { APPR.bg_dim = Number(e.target.value); $('dimVal').textContent = e.target.value + '%'; applyPrefs(APPR); };
+  $('sBlur').oninput = (e) => { APPR.bg_blur = Number(e.target.value); $('blurVal').textContent = e.target.value + 'px'; applyPrefs(APPR); };
+  $('bgEnabled').onchange = (e) => { APPR.bg_enabled = e.target.checked; applyPrefs(APPR); };
+  $$('[data-bg-pick]').forEach((el) => (el.onclick = () => { APPR.background = el.dataset.bgPick; APPR.bg_enabled = true; applyPrefs(APPR); render(); }));
+  $('bgFile').onchange = (e) => uploadBackground(e.target.files && e.target.files[0]);
+  $('bgRemove').onclick = () => removeBackground();
+  $('apprSave').onclick = () => persistAppearance();
+  $('apprReset').onclick = () => resetAppearance();
   $('aSave').onclick = async () => {
     try { await api('POST', '/api/me/password', { current: $('aCur').value, new: $('aNew').value }); toast(T('saved'), 'ok'); }
     catch (e) { toast(e.message, 'bad'); }
@@ -1060,7 +1149,7 @@ function pageSettings(view) {
   if ($('sSave')) $('sSave').onclick = async () => {
     try {
       await api('POST', '/api/settings', {
-        panel_name: $('sName').value, public_base_url: $('sBase').value, default_port: $('sPort').value,
+        public_base_url: $('sBase').value, default_port: $('sPort').value,
       });
       toast(T('saved'), 'ok');
       loadAll();
