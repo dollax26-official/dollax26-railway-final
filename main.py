@@ -1,0 +1,1077 @@
+"""
+Dollax Panel — FastAPI application (Railway build).
+
+This file is the Python counterpart of the Cloudflare Worker's fetch() router.
+Everything the Worker exposed under /api/* is re-implemented here against SQLite,
+plus the WebSocket relay entry point that the Worker got from its Durable-Object
+free runtime.
+
+Deliberate difference vs the Worker: **there are no outbounds**. The Worker's
+inbound could point at an outbound (direct / socks5 / http) to pick the exit;
+this app is itself the endpoint, so an inbound is self-contained. See README.md.
+"""
+import asyncio
+import hashlib
+import os
+import secrets
+import sys
+import time
+from contextlib import asynccontextmanager
+from urllib.parse import urlparse, parse_qs
+
+# --- make the entry point self-sufficient -------------------------------------
+# `python main.py` must work on Railway, Nixpacks, Heroku, plain Docker and in
+# Python's safe-path/isolated mode, none of which necessarily put the script's
+# directory on sys.path (that is what breaks `import db` with ModuleNotFoundError).
+_BOOT_DIR = os.path.dirname(os.path.abspath(__file__))
+for _p in (_BOOT_DIR, os.getcwd()):
+    if _p and _p not in sys.path:
+        sys.path.insert(0, _p)
+
+from fastapi import FastAPI, Request, WebSocket
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
+from starlette.middleware.sessions import SessionMiddleware
+
+import db
+import protocol
+import relay
+from pages import dashboard_html, login_html, subscription_page
+
+try:  # real QR codes on the subscription page (graceful without it)
+    import qrcode
+    import qrcode.image.svg as _qr_svg
+except Exception:  # pragma: no cover
+    qrcode = None
+    _qr_svg = None
+
+APP_VERSION = "2026.09.19-r1"
+
+SESSION_SECRET = os.getenv("SECRET_KEY") or secrets.token_urlsafe(48)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    db.init_db()
+    yield
+
+
+app = FastAPI(title="Dollax Panel", docs_url=None, redoc_url=None, lifespan=lifespan)
+app.add_middleware(SessionMiddleware, secret_key=SESSION_SECRET, same_site="lax", https_only=False)
+_HERE = os.path.dirname(os.path.abspath(__file__))
+app.mount("/static", StaticFiles(directory=os.path.join(_HERE, "static")), name="static")
+
+
+# ---------------------------------------------------------------- helpers
+def authed(request: Request) -> bool:
+    return bool(request.session.get("user"))
+
+
+def current_user(request: Request) -> str:
+    return str(request.session.get("user") or "")
+
+
+def guard(request: Request):
+    return None if authed(request) else RedirectResponse("/login", status_code=303)
+
+
+def unauthorized():
+    return JSONResponse({"error": "unauthorized"}, status_code=401)
+
+
+def is_owner(request: Request) -> bool:
+    row = db.get_admin(current_user(request))
+    return bool(row and row["role"] == "owner" and row["enabled"])
+
+
+def as_int(v, default=0, lo=0, hi=None):
+    try:
+        n = int(float(v))
+    except Exception:
+        n = default
+    n = max(lo, n)
+    return min(n, hi) if hi is not None else n
+
+
+def as_float(v, default=0.0, lo=0.0):
+    try:
+        n = float(v)
+    except Exception:
+        n = default
+    return max(lo, n)
+
+
+def as_bool(v, default=False):
+    if v is None:
+        return default
+    if isinstance(v, bool):
+        return v
+    return str(v).strip().lower() in ("1", "true", "on", "yes")
+
+
+def expiry(days=0, expires_at=""):
+    at = str(expires_at or "").strip()
+    if at:
+        return at
+    return db.expiry_from_days(as_int(days, 0, 0, 3650))
+
+
+async def form_data(request: Request) -> dict:
+    """Parse an application/x-www-form-urlencoded body (no python-multipart needed)."""
+    try:
+        body = (await request.body()).decode("utf-8", "ignore")
+    except Exception:
+        return {}
+    return {k: v[0] for k, v in parse_qs(body, keep_blank_values=True).items()}
+
+
+def client_ip(request: Request) -> str:
+    """Real client IP behind Railway's proxy."""
+    fwd = request.headers.get("x-forwarded-for") or ""
+    if fwd:
+        return fwd.split(",")[0].strip()[:64]
+    return str(request.headers.get("x-real-ip") or (request.client.host if request.client else "") or "")[:64]
+
+
+def effective_host(request: Request) -> str:
+    base = db.setting("public_base_url", "").strip().rstrip("/")
+    if base:
+        return urlparse(base).hostname or base
+    return (request.headers.get("x-forwarded-host") or request.headers.get("host") or "localhost").split(":")[0]
+
+
+def base_url(request: Request) -> str:
+    base = db.setting("public_base_url", "").strip().rstrip("/")
+    if base:
+        return base
+    proto = request.headers.get("x-forwarded-proto") or request.url.scheme or "https"
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host") or "localhost"
+    return f"{proto}://{host}"
+
+
+def inbound_dict(row) -> dict:
+    d = dict(row)
+    d["enabled"] = bool(d.get("enabled"))
+    d["allow_insecure"] = bool(d.get("allow_insecure"))
+    d["clean_ips"] = db.json_list(d.get("clean_ips"))
+    d["native"] = protocol.clean_protocol(d.get("protocol")) in protocol.NATIVE_PROTOCOLS
+    d["warn"] = "" if d["native"] else "Needs the external Xray bridge (VMess/SS are not WebSocket protocols)."
+    d["used_bytes"] = int(d.get("used_bytes") or 0)
+    d["used_human"] = protocol.fmt_bytes(d["used_bytes"])
+    d["limit_human"] = protocol.fmt_bytes(d.get("limit_bytes") or 0)
+    d["days_left"] = db.days_left(d.get("expires_at"))
+    d["expired"] = db.is_expired(d.get("expires_at"))
+    return d
+
+
+def client_dict(row, request: Request, inbound=None) -> dict:
+    d = dict(row)
+    d["enabled"] = bool(d.get("enabled"))
+    d["clean_ips"] = db.json_list(d.get("clean_ips"))
+    d["used_bytes"] = int(d.get("used_bytes") or 0)
+    d["used_human"] = protocol.fmt_bytes(d["used_bytes"])
+    d["limit_human"] = protocol.fmt_bytes(d.get("limit_bytes") or 0)
+    d["days_left"] = db.days_left(d.get("expires_at"))
+    d["expired"] = db.is_expired(d.get("expires_at"))
+    d["over_quota"] = bool(d.get("limit_bytes")) and d["used_bytes"] >= int(d["limit_bytes"])
+    d["active"] = d["enabled"] and not d["expired"] and not d["over_quota"]
+    ib = dict(inbound) if inbound is not None else dict(db.inbound_row(d["inbound_id"]) or {})
+    ib["clean_ips"] = db.json_list(ib.get("clean_ips"))
+    d["inbound_name"] = ib.get("name", "")
+    d["inbound_protocol"] = ib.get("protocol", "")
+    host = effective_host(request)
+    ips = d["clean_ips"] or ib.get("clean_ips") or []
+    links = protocol.link_list(ib, d["uuid"], host, ips) if ib else []
+    d["links"] = links
+    d["link"] = links[0] if links else ""
+    d["sub_url"] = f"{base_url(request)}/sub/{d.get('sub_token') or ''}"
+    d["usage_pct"] = int(min(100, (d["used_bytes"] / int(d["limit_bytes"]) * 100))) if d.get("limit_bytes") else 0
+    return d
+
+
+def entry_for(row, request: Request):
+    """(inbound, client) pair used to build a config."""
+    if row.keys() and "inbound_id" in row.keys():
+        ib = db.inbound_row(row["inbound_id"])
+        return (dict(ib) if ib else {}), dict(row)
+    return dict(row), {}
+
+
+# ---------------------------------------------------------------- pages
+@app.get("/health")
+async def health():
+    return {"ok": True, "service": "dollax-panel", "version": APP_VERSION}
+
+
+@app.get("/login", response_class=HTMLResponse)
+async def login_page():
+    return login_html(db.setting("panel_name", "Dollax Panel"))
+
+
+@app.post("/login")
+async def do_login(request: Request):
+    form = await form_data(request)
+    username = str(form.get("username", "")).strip()
+    password = str(form.get("password", ""))
+    row = db.get_admin(username)
+    if not row or not row["enabled"] or not db.verify_password(password, row["password_hash"]):
+        return HTMLResponse(login_html(db.setting("panel_name", "Dollax Panel"), "Invalid username or password."), status_code=401)
+    request.session["user"] = username
+    request.session["ip"] = client_ip(request)
+    db.log(username, "login", ip=client_ip(request))
+    return RedirectResponse("/", status_code=303)
+
+
+@app.post("/logout")
+async def do_logout(request: Request):
+    request.session.clear()
+    return RedirectResponse("/login", status_code=303)
+
+
+@app.get("/", response_class=HTMLResponse)
+async def root(request: Request):
+    r = guard(request)
+    return r or dashboard_html(db.setting("panel_name", "Dollax Panel"), APP_VERSION)
+
+
+# ---------------------------------------------------------------- session / account
+@app.get("/api/me")
+async def api_me(request: Request):
+    if not authed(request):
+        return unauthorized()
+    user = current_user(request)
+    row = db.get_admin(user)
+    return {"username": user, "role": (row["role"] if row else "admin"), "prefs": db.get_prefs(user),
+            "version": APP_VERSION, "host": effective_host(request)}
+
+
+@app.post("/api/me/password")
+async def api_change_password(request: Request):
+    if not authed(request):
+        return unauthorized()
+    d = await request.json()
+    user = current_user(request)
+    row = db.get_admin(user)
+    if not db.verify_password(str(d.get("current", "")), row["password_hash"] if row else ""):
+        return JSONResponse({"error": "Current password is wrong."}, status_code=400)
+    new = str(d.get("new", ""))
+    if len(new) < 4:
+        return JSONResponse({"error": "New password is too short."}, status_code=400)
+    db.set_password(user, new)
+    db.log(user, "password-change")
+    return {"ok": True}
+
+
+@app.post("/api/me/prefs")
+async def api_me_prefs(request: Request):
+    if not authed(request):
+        return unauthorized()
+    d = await request.json()
+    prefs = db.get_prefs(current_user(request))
+    prefs.update({k: v for k, v in (d or {}).items()
+                 if k in ("language", "theme", "style", "music", "music_volume", "accent", "font", "motion")})
+    db.set_prefs(current_user(request), prefs)
+    return {"ok": True, "prefs": prefs}
+
+
+# ---------------------------------------------------------------- overview
+@app.get("/api/summary")
+async def api_summary(request: Request):
+    if not authed(request):
+        return unauthorized()
+    inbounds = db.list_inbounds()
+    clients = db.list_clients()
+    total_used = sum(int(c.get("used_bytes") or 0) for c in clients)
+    active = sum(1 for c in clients if c["enabled"] and not db.is_expired(c.get("expires_at")))
+    native = sum(1 for i in inbounds if protocol.clean_protocol(i["protocol"]) in protocol.NATIVE_PROTOCOLS)
+    return {
+        "inbounds": len(inbounds), "clients": len(clients), "active_clients": active,
+        "native_inbounds": native,
+        "total_used_bytes": total_used, "total_used_human": protocol.fmt_bytes(total_used),
+        "transport": "WSS", "host": effective_host(request), "version": APP_VERSION,
+        "default_port": db.setting("default_port", "443"),
+    }
+
+
+@app.get("/api/diagnostics")
+async def api_diagnostics(request: Request):
+    if not authed(request):
+        return unauthorized()
+    inbounds = db.list_inbounds()
+    clients = db.list_clients()
+    checks = []
+
+    def add(level, title, detail, fix=""):
+        checks.append({"level": level, "title": title, "detail": detail, "fix": fix})
+
+    if not db.setting("public_base_url"):
+        add("warn", "Public base URL is not set",
+            "Links fall back to the request host, which can be wrong behind a proxy.",
+            "Settings → Public base URL → set your Railway domain.")
+    else:
+        add("ok", "Public base URL set", db.setting("public_base_url"))
+    if not inbounds:
+        add("warn", "No inbound yet", "Create one on the Inbounds page.", "Inbounds → Add inbound")
+    else:
+        add("ok", f"{len(inbounds)} inbound(s)", ", ".join(i["name"] for i in inbounds[:6]))
+    if not clients:
+        add("warn", "No client yet", "An inbound alone has no credentials.", "Clients → Add client")
+    else:
+        add("ok", f"{len(clients)} client(s)", f"{sum(1 for c in clients if c['enabled'])} enabled")
+    bad = [i["name"] for i in inbounds if protocol.clean_protocol(i["protocol"]) not in protocol.NATIVE_PROTOCOLS]
+    if bad:
+        add("warn", "Inbound(s) need the Xray bridge",
+            f"{', '.join(bad)} are VMess/Shadowsocks — this app can only relay VLESS/Trojan over WebSocket.",
+            "Inbounds → the inbound → Copy Xray bridge bundle.")
+    else:
+        add("ok", "All inbounds are natively served", "VLESS/Trojan over WebSocket.")
+    with_clean = [i["name"] for i in inbounds if db.json_list(i.get("clean_ips"))]
+    if with_clean:
+        add("ok", f"{len(with_clean)} inbound(s) rotate clean IPs", ", ".join(with_clean[:6]))
+    else:
+        add("info", "No clean IPs set", "Optionally paste edge IPs into an inbound to rotate addresses.",
+            "Inbounds → Edit → Clean IPs")
+    if not (request.headers.get("x-forwarded-proto") or "").startswith("https") and "https" not in str(request.url):
+        add("warn", "Served over plain HTTP", "TLS is terminated by Railway's edge in production.", "")
+    add("ok", "Relay", "VLESS-WS + Trojan-WS are served by this app; UDP and VMess/SS are not.")
+    return {"checks": checks, "version": APP_VERSION}
+
+
+@app.get("/api/activity")
+async def api_activity(request: Request):
+    if not authed(request):
+        return unauthorized()
+    return {"items": db.activity(120)}
+
+
+# ---------------------------------------------------------------- inbounds
+@app.get("/api/protocols")
+async def api_protocols(request: Request):
+    if not authed(request):
+        return unauthorized()
+    return {
+        "protocols": protocol.PROTOCOLS, "networks": protocol.NETWORKS, "securities": protocol.SECURITIES,
+        "fingerprints": protocol.FP_LIST, "ss_methods": protocol.SS_METHODS,
+        "native": protocol.NATIVE_PROTOCOLS,
+    }
+
+
+def _inbound_payload(d: dict, existing=None):
+    """Normalise + validate an inbound payload (shared by create and update)."""
+    name = str(d.get("name") or d.get("label") or (existing["name"] if existing else "VLESS WS")).strip()[:80]
+    proto = protocol.clean_protocol(d.get("protocol", existing["protocol"] if existing else "vless"))
+    net = protocol.clean_network(d.get("network", existing["network"] if existing else "ws"))
+    sec = protocol.clean_security(d.get("security", existing["security"] if existing else "tls"))
+    path = str(d.get("path", existing["path"] if existing else "") or "").strip()
+    if not path:
+        path = "/ws/" + protocol.new_token(10)
+    if not path.startswith("/"):
+        path = "/" + path
+    if len(path) > 180 or any(ch in path for ch in (" ", "?", "#")):
+        return None, "Invalid WebSocket path."
+    port = as_int(d.get("port", existing["port"] if existing else db.setting("default_port", "443")), 443, 1, 65535)
+    host = str(d.get("host_header", existing["host_header"] if existing else "") or "").strip()[:253]
+    sni = str(d.get("sni", existing["sni"] if existing else "") or "").strip()[:253]
+    fields = {
+        "name": name or "Inbound",
+        "protocol": proto, "network": net, "security": sec,
+        "address": str(d.get("address", existing["address"] if existing else "") or "").strip()[:253],
+        "port": port, "path": path,
+        "host_header": host, "sni": sni,
+        "alpn": str(d.get("alpn", existing["alpn"] if existing else "http/1.1") or "")[:100],
+        "fingerprint": protocol.clean_fingerprint(d.get("fingerprint", existing["fingerprint"] if existing else "chrome")),
+        "flow": str(d.get("flow", existing["flow"] if existing else "") or "")[:60],
+        "grpc_service_name": str(d.get("grpc_service_name", existing["grpc_service_name"] if existing else "") or "")[:80],
+        "grpc_mode": str(d.get("grpc_mode", existing["grpc_mode"] if existing else "gun") or "gun")[:20],
+        "xhttp_mode": str(d.get("xhttp_mode", existing["xhttp_mode"] if existing else "packet-up") or "packet-up")[:20],
+        "header_type": str(d.get("header_type", existing["header_type"] if existing else "none") or "none")[:20],
+        "allow_insecure": 1 if as_bool(d.get("allow_insecure", existing["allow_insecure"] if existing else 0)) else 0,
+        "reality_public_key": str(d.get("reality_public_key", existing["reality_public_key"] if existing else "") or "")[:120],
+        "reality_short_id": str(d.get("reality_short_id", existing["reality_short_id"] if existing else "") or "")[:40],
+        "reality_spider_x": str(d.get("reality_spider_x", existing["reality_spider_x"] if existing else "/") or "/")[:120],
+        "ss_method": str(d.get("ss_method", existing["ss_method"] if existing else "chacha20-ietf-poly1305") or "chacha20-ietf-poly1305")[:60],
+        "ss_password": str(d.get("ss_password", existing["ss_password"] if existing else "") or "")[:120],
+        "fragment": str(d.get("fragment", existing["fragment"] if existing else "") or "")[:120],
+        "note": str(d.get("note", existing["note"] if existing else "") or "")[:500],
+    }
+    if "limit_bytes" in d:
+        fields["limit_bytes"] = as_int(d.get("limit_bytes"), 0, 0)
+    elif "limit_value" in d:
+        fields["limit_bytes"] = int(as_float(d.get("limit_value")) * 1024 ** 3)
+    else:
+        fields["limit_bytes"] = int(existing["limit_bytes"]) if existing else 0
+    if "expires_at" in d and str(d.get("expires_at") or "").strip():
+        fields["expires_at"] = str(d["expires_at"])[:40]
+    elif "expires_days" in d:
+        fields["expires_at"] = expiry(d.get("expires_days"))
+    else:
+        fields["expires_at"] = existing["expires_at"] if existing else ""
+    fields["ip_limit"] = as_int(d.get("ip_limit", existing["ip_limit"] if existing else 0), 0, 0, 5000)
+    fields["connection_limit"] = as_int(d.get("connection_limit", existing["connection_limit"] if existing else 0), 0, 0, 100000)
+    fields["client_limit"] = as_int(d.get("client_limit", existing["client_limit"] if existing else 0), 0, 0, 10000)
+    fields["config_count"] = as_int(d.get("config_count", existing["config_count"] if existing else 1), 1, 1, 40)
+    fields["enabled"] = 1 if as_bool(d.get("enabled", existing["enabled"] if existing else 1), True) else 0
+    # sensible defaults: a blank host header / SNI follows the inbound address
+    if fields["address"]:
+        if not fields["host_header"]:
+            fields["host_header"] = fields["address"]
+        if not fields["sni"] and fields["security"] != "none":
+            fields["sni"] = fields["address"]
+    return fields, ""
+
+
+@app.get("/api/inbounds")
+async def api_list_inbounds(request: Request):
+    if not authed(request):
+        return unauthorized()
+    items = []
+    for row in db.list_inbounds():
+        d = inbound_dict(row)
+        d["client_count"] = len(db.clients_for_inbound(row["id"]))
+        d["sub_url"] = f"{base_url(request)}/sub/{row['sub_token']}"
+        self_cl = _inbound_as_client(row)
+        d["links"] = protocol.link_list(d, self_cl["uuid"], effective_host(request)) if self_cl["uuid"] else []
+        d["link"] = d["links"][0] if d["links"] else ""
+        items.append(d)
+    return {"items": items}
+
+
+@app.post("/api/inbounds")
+async def api_create_inbound(request: Request):
+    if not authed(request):
+        return unauthorized()
+    d = await request.json()
+    fields, err = _inbound_payload(d or {})
+    if err:
+        return JSONResponse({"error": err}, status_code=400)
+    try:
+        iid = db.create_inbound(fields)
+    except Exception:
+        return JSONResponse({"error": "That WebSocket path already exists."}, status_code=409)
+    db.log(current_user(request), "inbound-create", fields["name"], ip=client_ip(request))
+    ib = inbound_dict(db.inbound_row(iid))
+    self_uuid = db.inbound_row(iid)["uuid"]
+    ib["links"] = protocol.link_list(ib, self_uuid, effective_host(request))
+    ib["link"] = ib["links"][0] if ib["links"] else ""
+    ib["sub_url"] = f"{base_url(request)}/sub/{db.inbound_row(iid)['sub_token']}"
+    return {"ok": True, "id": iid, "inbound": ib}
+
+
+@app.patch("/api/inbounds/{iid}")
+async def api_update_inbound(request: Request, iid: str):
+    if not authed(request):
+        return unauthorized()
+    row = db.inbound_row(iid)
+    if not row:
+        return JSONResponse({"error": "Inbound not found"}, status_code=404)
+    d = await request.json()
+    fields, err = _inbound_payload(d or {}, existing=row)
+    if err:
+        return JSONResponse({"error": err}, status_code=400)
+    try:
+        db.update_inbound(iid, fields)
+    except Exception:
+        return JSONResponse({"error": "That WebSocket path already exists."}, status_code=409)
+    db.log(current_user(request), "inbound-update", fields["name"], ip=client_ip(request))
+    ib = inbound_dict(db.inbound_row(iid))
+    self_uuid = db.inbound_row(iid)["uuid"]
+    ib["links"] = protocol.link_list(ib, self_uuid, effective_host(request))
+    ib["link"] = ib["links"][0] if ib["links"] else ""
+    return {"ok": True, "inbound": ib}
+
+
+@app.post("/api/inbounds/{iid}/toggle")
+async def api_toggle_inbound(request: Request, iid: str):
+    if not authed(request):
+        return unauthorized()
+    row = db.inbound_row(iid)
+    if not row:
+        return JSONResponse({"error": "Inbound not found"}, status_code=404)
+    db.update_inbound(iid, {"enabled": 0 if row["enabled"] else 1})
+    return {"ok": True, "enabled": not bool(row["enabled"])}
+
+
+@app.post("/api/inbounds/{iid}/regenerate")
+async def api_regenerate_inbound(request: Request, iid: str):
+    if not authed(request):
+        return unauthorized()
+    if not db.inbound_row(iid):
+        return JSONResponse({"error": "Inbound not found"}, status_code=404)
+    new_path = "/ws/" + protocol.new_token(10)
+    db.update_inbound(iid, {"path": new_path})
+    for c in db.clients_for_inbound(iid):
+        db.regenerate_client(c["id"])
+    db.log(current_user(request), "inbound-regenerate", iid)
+    return {"ok": True, "path": new_path}
+
+
+@app.delete("/api/inbounds/{iid}")
+async def api_delete_inbound(request: Request, iid: str):
+    if not authed(request):
+        return unauthorized()
+    ok = db.delete_inbound(iid)
+    db.log(current_user(request), "inbound-delete", iid)
+    return {"ok": ok}
+
+
+@app.post("/api/inbounds/bulk")
+async def api_bulk_inbound(request: Request):
+    if not authed(request):
+        return unauthorized()
+    d = await request.json()
+    ids = [str(x) for x in (d.get("ids") or [])]
+    action = str(d.get("action") or "")
+    if not ids:
+        return JSONResponse({"error": "Nothing selected."}, status_code=400)
+    n = 0
+    for iid in ids:
+        if action == "delete":
+            n += 1 if db.delete_inbound(iid) else 0
+        elif action in ("enable", "disable"):
+            db.update_inbound(iid, {"enabled": 1 if action == "enable" else 0})
+            n += 1
+        elif action == "reset-usage":
+            import json
+            with db.conn() as c:
+                c.execute("UPDATE inbounds SET used_bytes=0 WHERE id=?", (iid,))
+                c.commit()
+            n += 1
+    db.log(current_user(request), "inbound-bulk", f"{action} x{n}")
+    return {"ok": True, "affected": n}
+
+
+@app.get("/api/inbounds/{iid}/info")
+async def api_inbound_info(request: Request, iid: str):
+    if not authed(request):
+        return unauthorized()
+    row = db.inbound_row(iid)
+    if not row:
+        return JSONResponse({"error": "Inbound not found"}, status_code=404)
+    ib = inbound_dict(row)
+    clients = [client_dict(c, request, inbound=dict(row)) for c in db.clients_for_inbound(iid)]
+    self_cl = _inbound_as_client(row)
+    return {"inbound": ib, "clients": clients,
+            "self_link": protocol.link_list(ib, self_cl["uuid"], effective_host(request))[0] if self_cl["uuid"] else "",
+            "sub_url": f"{base_url(request)}/sub/{row['sub_token']}",
+            "config_count": int(row["config_count"] or 1)}
+
+
+# ---------------------------------------------------------------- clients
+@app.get("/api/clients")
+async def api_list_clients(request: Request):
+    if not authed(request):
+        return unauthorized()
+    rows = db.list_clients()
+    ids = {r["inbound_id"] for r in rows}
+    cache = {}
+    for iid in ids:
+        r = db.inbound_row(iid)
+        cache[iid] = dict(r) if r else {}
+    return {"items": [client_dict(r, request, inbound=cache.get(r["inbound_id"], {})) for r in rows]}
+
+
+@app.get("/api/inbounds/{iid}/clients")
+async def api_inbound_clients(request: Request, iid: str):
+    if not authed(request):
+        return unauthorized()
+    row = db.inbound_row(iid)
+    if not row:
+        return JSONResponse({"error": "Inbound not found"}, status_code=404)
+    return {"items": [client_dict(c, request, inbound=dict(row)) for c in db.clients_for_inbound(iid)]}
+
+
+@app.post("/api/clients")
+async def api_create_client(request: Request):
+    if not authed(request):
+        return unauthorized()
+    d = await request.json()
+    iid = str(d.get("inbound_id") or "")
+    row = db.inbound_row(iid)
+    if not row:
+        return JSONResponse({"error": "Inbound not found"}, status_code=404)
+    existing = db.clients_for_inbound(iid)
+    if row["client_limit"] and len(existing) >= int(row["client_limit"]):
+        return JSONResponse({"error": "This inbound reached its client limit."}, status_code=409)
+    name = str(d.get("name") or "Client").strip()[:80] or "Client"
+    cid = db.create_client(
+        iid, name,
+        limit_bytes=int(as_float(d.get("limit_value")) * 1024 ** 3) if "limit_value" in d else as_int(d.get("limit_bytes"), 0, 0),
+        expires_at=expiry(d.get("expires_days", 0), d.get("expires_at", "")),
+        ip_limit=as_int(d.get("ip_limit"), 0, 0, 5000),
+        connection_limit=as_int(d.get("connection_limit"), 0, 0, 100000),
+        speed_limit_mbps=as_float(d.get("speed_limit_mbps"), 0),
+        note=str(d.get("note") or "")[:500],
+        enabled=1 if as_bool(d.get("enabled", 1), True) else 0,
+    )
+    db.log(current_user(request), "client-create", name)
+    return {"ok": True, "client": client_dict(db.client_row(cid), request, inbound=dict(row))}
+
+
+@app.patch("/api/clients/{cid}")
+async def api_update_client(request: Request, cid: str):
+    if not authed(request):
+        return unauthorized()
+    row = db.client_row(cid)
+    if not row:
+        return JSONResponse({"error": "Client not found"}, status_code=404)
+    d = await request.json()
+    fields = {}
+    if "name" in d:
+        fields["name"] = str(d["name"]).strip()[:80] or row["name"]
+    if "limit_value" in d:
+        fields["limit_bytes"] = int(as_float(d["limit_value"]) * 1024 ** 3)
+    elif "limit_bytes" in d:
+        fields["limit_bytes"] = as_int(d["limit_bytes"], int(row["limit_bytes"]), 0)
+    if "expires_days" in d and not str(row["expires_at"] or ""):
+        fields["expires_at"] = expiry(d["expires_days"])
+    if "expires_at" in d:
+        fields["expires_at"] = str(d["expires_at"] or "")[:40]
+    for k, caster in (("ip_limit", lambda v: as_int(v, row["ip_limit"], 0, 5000)),
+                      ("connection_limit", lambda v: as_int(v, row["connection_limit"], 0, 100000)),
+                      ("speed_limit_mbps", lambda v: as_float(v, row["speed_limit_mbps"], 0))):
+        if k in d:
+            fields[k] = caster(d[k])
+    if "note" in d:
+        fields["note"] = str(d["note"])[:500]
+    if "enabled" in d:
+        fields["enabled"] = 1 if as_bool(d["enabled"], True) else 0
+    db.update_client(cid, fields)
+    return {"ok": True, "client": client_dict(db.client_row(cid), request)}
+
+
+@app.delete("/api/clients/{cid}")
+async def api_delete_client(request: Request, cid: str):
+    if not authed(request):
+        return unauthorized()
+    ok = db.delete_client(cid)
+    db.log(current_user(request), "client-delete", cid)
+    return {"ok": ok}
+
+
+@app.post("/api/clients/{cid}/regenerate")
+async def api_regenerate_client(request: Request, cid: str):
+    if not authed(request):
+        return unauthorized()
+    if not db.client_row(cid):
+        return JSONResponse({"error": "Client not found"}, status_code=404)
+    db.regenerate_client(cid)
+    return {"ok": True, "client": client_dict(db.client_row(cid), request)}
+
+
+@app.post("/api/clients/{cid}/reset-usage")
+async def api_reset_usage(request: Request, cid: str):
+    if not authed(request):
+        return unauthorized()
+    if not db.client_row(cid):
+        return JSONResponse({"error": "Client not found"}, status_code=404)
+    db.reset_usage(cid, True)
+    return {"ok": True, "client": client_dict(db.client_row(cid), request)}
+
+
+# ---------------------------------------------------------------- settings
+@app.get("/api/settings")
+async def api_get_settings(request: Request):
+    if not authed(request):
+        return unauthorized()
+    owner = is_owner(request)
+    s = db.all_settings() if owner else {}
+    s.pop("iran_ips_v1", None)
+    return {"settings": s, "editable": owner, "username": current_user(request),
+            "role": "owner" if owner else "admin", "version": APP_VERSION,
+            "public_base_url": db.setting("public_base_url", "")}
+
+
+@app.post("/api/settings")
+async def api_set_settings(request: Request):
+    if not authed(request):
+        return unauthorized()
+    if not is_owner(request):
+        return JSONResponse({"error": "Only the owner can change panel settings."}, status_code=403)
+    d = await request.json()
+    for key in ("panel_name", "public_base_url", "default_port", "xray_bridge_host", "xray_bridge_port"):
+        if key in d:
+            db.set_setting(key, str(d[key])[:200].strip())
+    db.log(current_user(request), "settings-update",
+           ",".join(k for k in d if k in ("panel_name", "public_base_url", "default_port",
+                                           "xray_bridge_host", "xray_bridge_port")),
+           ip=client_ip(request))
+    s = db.all_settings()
+    s.pop("iran_ips_v1", None)
+    return {"ok": True, "settings": s}
+
+
+@app.get("/api/xray/setup")
+async def api_xray_setup(request: Request):
+    if not authed(request):
+        return unauthorized()
+    inbounds = db.list_inbounds()
+    clients_by = {i["id"]: db.clients_for_inbound(i["id"]) for i in inbounds}
+    host = db.setting("xray_bridge_host") or effective_host(request)
+    port = as_int(db.setting("xray_bridge_port", "8080"), 8080, 1, 65535)
+    bundle = protocol.xray_bridge_config(host, inbounds, socks_port=port, clients_by_inbound=clients_by)
+    bundle["inbounds"] = len(inbounds)
+    return bundle
+
+
+# ---------------------------------------------------------------- admins (owner only)
+@app.get("/api/admins")
+async def api_list_admins(request: Request):
+    if not authed(request):
+        return unauthorized()
+    if not is_owner(request):
+        return JSONResponse({"error": "Only the owner can manage admins."}, status_code=403)
+    return {"items": db.list_admins()}
+
+
+@app.post("/api/admins")
+async def api_create_admin(request: Request):
+    if not authed(request):
+        return unauthorized()
+    if not is_owner(request):
+        return JSONResponse({"error": "Only the owner can manage admins."}, status_code=403)
+    d = await request.json()
+    username = str(d.get("username") or "").strip()[:60]
+    password = str(d.get("password") or "")
+    if len(username) < 3 or len(password) < 4:
+        return JSONResponse({"error": "Username (3+) and password (4+) are required."}, status_code=400)
+    if db.get_admin(username):
+        return JSONResponse({"error": "That username already exists."}, status_code=409)
+    db.create_admin(username, password, "owner" if d.get("role") == "owner" else "admin")
+    db.log(current_user(request), "admin-create", username, ip=client_ip(request))
+    return {"ok": True, "items": db.list_admins()}
+
+
+@app.patch("/api/admins/{username}")
+async def api_update_admin(request: Request, username: str):
+    if not authed(request):
+        return unauthorized()
+    if not is_owner(request):
+        return JSONResponse({"error": "Only the owner can manage admins."}, status_code=403)
+    row = db.get_admin(username)
+    if not row:
+        return JSONResponse({"error": "Admin not found"}, status_code=404)
+    d = await request.json()
+    role = d.get("role", row["role"])
+    enabled = row["enabled"] if "enabled" not in d else (1 if as_bool(d.get("enabled"), True) else 0)
+    demoting = row["role"] == "owner" and (role != "owner" or not enabled)
+    if demoting and db.owner_count() <= 1:
+        return JSONResponse({"error": "The last owner cannot be demoted or disabled."}, status_code=400)
+    db.update_admin(username, role=role, enabled=bool(enabled), password=str(d.get("password") or "") or None)
+    db.log(current_user(request), "admin-update", username, ip=client_ip(request))
+    return {"ok": True, "items": db.list_admins()}
+
+
+@app.delete("/api/admins/{username}")
+async def api_delete_admin(request: Request, username: str):
+    if not authed(request):
+        return unauthorized()
+    if not is_owner(request):
+        return JSONResponse({"error": "Only the owner can manage admins."}, status_code=403)
+    row = db.get_admin(username)
+    if not row:
+        return JSONResponse({"error": "Admin not found"}, status_code=404)
+    if row["role"] == "owner" and db.owner_count() <= 1:
+        return JSONResponse({"error": "The last owner cannot be deleted."}, status_code=400)
+    db.delete_admin(username)
+    db.log(current_user(request), "admin-delete", username, ip=client_ip(request))
+    return {"ok": True, "items": db.list_admins()}
+
+
+# ---------------------------------------------------------------- subscriptions
+def _inbound_as_client(inbound_row) -> dict:
+    """The inbound's own credential, used when no client exists (or alongside them)."""
+    ib = dict(inbound_row)
+    return {
+        "id": "", "inbound_id": ib.get("id", ""), "name": ib.get("name", "inbound"),
+        "uuid": ib.get("uuid", ""), "enabled": ib.get("enabled", 1),
+        "expires_at": ib.get("expires_at", ""), "limit_bytes": ib.get("limit_bytes", 0),
+        "used_bytes": ib.get("used_bytes", 0), "clean_ips": [], "sub_token": ib.get("sub_token", ""),
+        "ip_limit": ib.get("ip_limit", 0), "connection_limit": ib.get("connection_limit", 0),
+        "speed_limit_mbps": 0, "note": "", "is_inbound": True,
+    }
+
+
+def _sub_entries(token: str):
+    client = db.client_by_token(token)
+    if client:
+        ib = db.inbound_row(client["inbound_id"])
+        return ([(dict(ib), dict(client))] if ib else []), f"client:{client['name']}"
+    inbound = db.inbound_by_token(token)
+    if inbound:
+        # the inbound itself is always a usable config — clients are optional extras
+        entries = [(dict(inbound), _inbound_as_client(inbound))]
+        entries += [(dict(inbound), dict(c)) for c in db.clients_for_inbound(inbound["id"])]
+        return entries, f"inbound:{inbound['name']}"
+    return [], ""
+
+
+def _sub_lines(entries, host):
+    lines = []
+    for ib, cl in entries:
+        lines += protocol.link_list(ib, cl["uuid"], host, cl.get("clean_ips") or ib.get("clean_ips"))
+    return lines
+
+
+def _userinfo_header(entries):
+    used = sum(int(cl.get("used_bytes") or 0) for _, cl in entries)
+    limit = sum(int(cl.get("limit_bytes") or 0) for _, cl in entries)
+    expires = [cl.get("expires_at") for _, cl in entries if cl.get("expires_at")]
+    expire_ts = 0
+    if expires:
+        try:
+            from datetime import datetime
+            expire_ts = int(datetime.fromisoformat(min(expires)).timestamp())
+        except Exception:
+            expire_ts = 0
+    upload = int(used * 0.4)
+    return f"upload={upload}; download={used - upload}; total={limit}; expire={expire_ts}"
+
+
+def _entry_host(ib: dict, cl: dict, request: Request) -> str:
+    """Which address a config should point at: client clean IP → inbound clean IP → address → host."""
+    for candidate in (cl.get("clean_ips"), ib.get("clean_ips")):
+        items = db.json_list(candidate) if candidate else []
+        if items:
+            return str(items[0]).split("#")[0].split(":")[0]
+    return ib.get("address") or effective_host(request)
+
+
+@app.get("/sub/{token}")
+async def subscription(token: str, request: Request, target: str = "auto"):
+    entries, label = _sub_entries(token)
+    if not entries:
+        return PlainTextResponse("not found", status_code=404)
+    for _, cl in entries:
+        if not (cl.get("enabled") and not db.is_expired(cl.get("expires_at"))):
+            return PlainTextResponse("subscription disabled", status_code=403)
+    host = effective_host(request)
+    ua = (request.headers.get("user-agent") or "").lower()
+    wants_browser = "mozilla" in ua and not any(k in ua for k in ("v2ray", "clash", "sing", "v2rayng", "nekobox", "shadowrocket"))
+    if target == "auto" and wants_browser:
+        return RedirectResponse(f"/info/{token}", status_code=307)
+    tgt = target.lower()
+    entries_named = [{"inbound": ib, "client": cl, "host": _entry_host(ib, cl, request),
+                      "name": f"{ib.get('name')}-{cl.get('name')}"} for ib, cl in entries]
+    if tgt in ("clash", "clash-meta", "mihomo"):
+        body = protocol.clash_config(entries_named, db.setting("panel_name", "Dollax"))
+    elif tgt in ("singbox", "sing-box"):
+        body = protocol.singbox_config(entries_named)
+    else:
+        body = protocol.subscription_body(_sub_lines(entries, host))
+    headers = {
+        "Subscription-Userinfo": _userinfo_header(entries),
+        "Profile-Update-Interval": "12",
+        "Profile-Title": db.setting("panel_name", "Dollax Panel"),
+    }
+    return PlainTextResponse(body, headers=headers)
+
+
+@app.get("/api/subscription/{token}")
+async def subscription_stats(token: str, request: Request):
+    entries, label = _sub_entries(token)
+    if not entries:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    host = effective_host(request)
+    return {
+        "label": label,
+        "userinfo": _userinfo_header(entries),
+        "links": _sub_lines(entries, host),
+        "counts": {"configs": sum(max(1, int(ib.get("config_count") or 1)) for ib, _ in entries)},
+    }
+
+
+def _qr_svg_markup(text: str) -> str:
+    """Inline SVG QR (white tile), or a placeholder when the lib is missing."""
+    if not qrcode or not _qr_svg:
+        return '<div style="display:grid;place-items:center;width:100%;height:100%;color:#333;font-size:10px">QR</div>'
+    import io
+    img = qrcode.make(text, image_factory=_qr_svg.SvgPathImage)
+    buf = io.BytesIO()
+    img.save(buf)
+    svg = buf.getvalue().decode("utf-8", "ignore")
+    # white tile so scanners lock on in dark themes
+    return svg.replace("<svg ", "<svg style=\"background:#fff;width:100%;height:100%\" ", 1)
+
+
+@app.get("/info/{token}", response_class=HTMLResponse)
+async def subscription_info(token: str, request: Request):
+    """The graphical, per-inbound subscription page (also used for client tokens)."""
+    entries, label = _sub_entries(token)
+    if not entries:
+        return HTMLResponse("<h1 style='font-family:sans-serif'>Not found</h1>", status_code=404)
+
+    host = effective_host(request)
+    prefs = db.get_prefs(current_user(request)) if authed(request) else {}
+    if not prefs:
+        owner = db.get_admin((os.getenv("ADMIN_USERNAME") or "dollax26").strip() or "dollax26")
+        prefs = db.get_prefs(owner["username"]) if owner else {}
+
+    # an inbound token shows every client; a client token shows just that client
+    inbound = entries[0][0]
+    used = sum(int(cl.get("used_bytes") or 0) for _, cl in entries)
+    limit = sum(int(cl.get("limit_bytes") or 0) for _, cl in entries)
+    pct = min(100, round(used / limit * 100)) if limit else 0
+    expires_vals = [cl.get("expires_at") for _, cl in entries if cl.get("expires_at")]
+
+    clients_view = []
+    for ib, cl in entries:
+        c_used = int(cl.get("used_bytes") or 0)
+        c_limit = int(cl.get("limit_bytes") or 0)
+        links = protocol.link_list(ib, cl["uuid"], host, cl.get("clean_ips") or ib.get("clean_ips"))
+        expired = db.is_expired(cl.get("expires_at"))
+        if not cl.get("enabled"):
+            status, status_class = "disabled", ""
+        elif expired:
+            status, status_class = "expired", "bad"
+        elif c_limit and c_used >= c_limit:
+            status, status_class = "quota", "warn"
+        else:
+            status, status_class = "active", "ok"
+        clients_view.append({
+            "name": cl.get("name"), "status": status, "status_class": status_class,
+            "pct": min(100, round(c_used / c_limit * 100)) if c_limit else 0,
+            "used": protocol.fmt_bytes(c_used),
+            "remaining": protocol.fmt_bytes(max(0, c_limit - c_used)) if c_limit else "∞",
+            "expires": (str(cl.get("expires_at"))[:10] if cl.get("expires_at") else "∞"),
+            "sub_url": f"{base_url(request)}/sub/{cl.get('sub_token')}",
+            "links": [{"link": l} for l in links],
+        })
+
+    sub_url = f"{base_url(request)}/sub/{token}"
+    badges = [str(inbound.get("protocol") or "vless").upper(),
+              str(inbound.get("network") or "ws").upper(),
+              str(inbound.get("security") or "tls").upper()]
+    data = {
+        "panel_name": db.setting("panel_name", "Dollax Panel"),
+        "title": inbound.get("name") or "Subscription",
+        "badges": badges,
+        "endpoint": f"{inbound.get('address') or host}:{inbound.get('port') or 443} · path {inbound.get('path')}",
+        "protocol": str(inbound.get("protocol") or "vless"),
+        "client_count": len(clients_view),
+        "config_count": sum(max(1, int(ib.get("config_count") or 1)) for ib, _ in entries),
+        "pct": pct,
+        "sub_url": sub_url,
+        "sub_clash": sub_url + "?target=clash",
+        "sub_singbox": sub_url + "?target=singbox",
+        "sub_base64": sub_url,
+        "qr_svg": _qr_svg_markup(sub_url),
+        "clients": clients_view,
+        "language": prefs.get("language") or "en",
+        "theme": prefs.get("theme") or "dark-green",
+        "ui_style": prefs.get("style") or "solid",
+    }
+    db.log("", "subpage-view", label or token)
+    return HTMLResponse(subscription_page(data))
+
+
+# ---------------------------------------------------------------- relay (WebSocket)
+@app.websocket("/{full_path:path}")
+async def ws_entry(ws: WebSocket, full_path: str):
+    path = "/" + full_path
+    ib = db.inbound_by_path(path)
+    if not ib:
+        await ws.close(code=1008)
+        return
+    inbound = dict(ib)
+    if protocol.clean_protocol(inbound.get("protocol")) not in protocol.NATIVE_PROTOCOLS:
+        await ws.close(code=1003)
+        return
+    if db.is_expired(inbound.get("expires_at")):
+        await ws.close(code=1008)
+        return
+    if inbound.get("limit_bytes") and int(inbound.get("used_bytes") or 0) >= int(inbound["limit_bytes"]):
+        await ws.close(code=1008)
+        return
+
+    clients = db.clients_for_inbound(inbound["id"])
+
+    # peek the first frame to identify the credential
+    await ws.accept()
+    try:
+        first = await ws.receive()
+    except Exception:
+        await ws.close(code=1002)
+        return
+    data = first.get("bytes") if isinstance(first, dict) else None
+    if not data:
+        await ws.close(code=1002)
+        return
+
+    proto = protocol.clean_protocol(inbound["protocol"])
+    self_client = _inbound_as_client(inbound)
+    client = None
+    if proto == "vless":
+        parsed = protocol.parse_vless_header(data)
+        if parsed:
+            client = next((c for c in clients if c["uuid"] == parsed["uuid"]), None)
+            if not client and parsed["uuid"] == inbound.get("uuid"):
+                client = self_client          # the inbound's own credential
+    else:  # trojan: the per-client secret is its uuid
+        head = bytes(data[:56]).lower()
+        candidates = {hashlib.sha224(str(c["uuid"]).encode()).hexdigest().encode(): c for c in clients}
+        candidates[hashlib.sha224(str(inbound.get("uuid") or "").encode()).hexdigest().encode()] = self_client
+        client = candidates.get(head)
+
+    if not client:
+        await ws.close(code=1008)
+        return
+    if not client["enabled"] or db.is_expired(client.get("expires_at")):
+        await ws.close(code=1008)
+        return
+    if client.get("limit_bytes") and int(client.get("used_bytes") or 0) >= int(client["limit_bytes"]):
+        await ws.close(code=1008)
+        return
+
+    async def replay():
+        """Give relay.handle() the frame we already consumed, once."""
+        if not replayed["v"]:
+            replayed["v"] = True
+            return first
+        return await original_receive()
+
+    original_receive = ws.receive
+    replayed = {"v": False}
+    reported = {"n": 0}
+    ws.receive = replay  # type: ignore[assignment]
+
+    def on_bytes(total, final=False):
+        delta = int(total) - reported["n"]
+        if delta <= 0:
+            return
+        reported["n"] = int(total)
+        if client.get("id"):
+            db.add_client_usage(client["id"], delta)
+        db.add_inbound_usage(inbound["id"], delta)
+
+    try:
+        await relay.handle(ws, inbound, dict(client), on_bytes=on_bytes, already_accepted=True)
+    except Exception:
+        try:
+            await ws.close(code=1011)
+        except Exception:
+            pass
+    finally:
+        ws.receive = original_receive  # type: ignore[assignment]
+
+
+# ---------------------------------------------------------------- entry point
+# `python main.py` must work (Railway / Nixpacks / manual runs) — not only
+# `uvicorn main:app`. Reads $PORT like every PaaS expects.
+if __name__ == "__main__":
+    import uvicorn
+
+    _port = int(os.getenv("PORT", "8080") or "8080")
+    print(f"[dollax] Dollax Panel {APP_VERSION} starting on 0.0.0.0:{_port}", flush=True)
+    print(f"[dollax] data db: {db.DB_PATH}", flush=True)
+    print(f"[dollax] SECRET_KEY from env: {'yes' if os.getenv('SECRET_KEY') else 'no (a random one is generated per boot)'}",
+          flush=True)
+    print(f"[dollax] owner seed: {os.getenv('ADMIN_USERNAME') or 'dollax26'} / "
+          f"{'env password' if os.getenv('ADMIN_PASSWORD') else 'default dollax26'}", flush=True)
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=_port,
+        proxy_headers=True,
+        forwarded_allow_ips="*",
+        log_level=(os.getenv("LOG_LEVEL") or "info"),
+    )

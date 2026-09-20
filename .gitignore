@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+data/
+*.db
+*.db-wal
+*.db-shm
+.DS_Store
+_scan.js
+tests/__pycache__/
