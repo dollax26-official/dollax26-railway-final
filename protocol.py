@@ -209,8 +209,26 @@ def _listify(value):
         return []
 
 
+def decorate_inbound(ib: dict, fallback_host: str = "") -> dict:
+    """Make sure a config always carries a routable **Host header** and **SNI**.
+
+    Explicit values always win; a blank one falls back to the inbound address and then to
+    the host the request came in on. This is what makes the generated links,
+    Clash and sing-box configs point somewhere (Cloudflare needs the Host header).
+    """
+    e = dict(ib)
+    host = str(e.get("host_header") or e.get("address") or fallback_host or "").strip()
+    e["host_header"] = host
+    if (e.get("security") or "tls") != "none":
+        e["sni"] = str(e.get("sni") or host).strip()
+    else:
+        e["sni"] = str(e.get("sni") or "").strip()
+    return e
+
+
 def link_list(inbound: dict, client_uuid: str, default_host: str, clean_ips=None):
     """The N configs of one inbound: rotate over clean IPs when present."""
+    inbound = decorate_inbound(inbound, default_host)
     count = max(1, min(40, int(inbound.get("config_count") or 1)))
     ips = _listify(clean_ips) or _listify(inbound.get("clean_ips"))
     names = config_names(inbound, count)
@@ -240,7 +258,7 @@ def clash_config(entries, panel_name="Dollax"):
     """entries: [{inbound, client, host, name}]"""
     out = ["proxies:"]
     for e in entries:
-        ib, cl = e["inbound"], e["client"]
+        ib, cl = decorate_inbound(e["inbound"], e["host"]), e["client"]
         p = clean_protocol(ib["protocol"])
         sec = ib.get("security") or "tls"
         lines = [f"  - name: {_yaml_str(e['name'])}", f"    type: {p}", f"    server: {_yaml_str(e['host'])}",
@@ -292,7 +310,7 @@ def singbox_config(entries):
     outs = []
     tags = []
     for e in entries:
-        ib, cl = e["inbound"], e["client"]
+        ib, cl = decorate_inbound(e["inbound"], e["host"]), e["client"]
         p = clean_protocol(ib["protocol"])
         sec = ib.get("security") or "tls"
         tag = e["name"]
