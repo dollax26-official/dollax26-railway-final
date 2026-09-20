@@ -688,6 +688,8 @@ function openBuilder(ib) {
       <label class="field"><span>${T('fAddress')}</span><input id="bAddress" value="${esc(b.address || '')}" placeholder="panel.up.railway.app"></label>
       <label class="field"><span>${T('fPort')}</span><input id="bPort" type="number" min="1" max="65535" value="${esc(b.port || 443)}"></label>
       <label class="field" id="grpPath"><span>${T('fPath')}</span><input id="bPath" value="${esc(b.path || '')}" placeholder="/ws/x (empty = auto)"></label>
+      <label class="field" id="grpHost"><span>${T('fHost')}</span><input id="bHost" value="${esc(b.host_header || '')}" placeholder="empty = address"></label>
+      <label class="field" id="grpSni"><span>${T('fSni')}</span><input id="bSni" value="${esc(b.sni || '')}" placeholder="empty = host"></label>
     </div>
 
     <div class="form-grid" style="margin-top:12px">
@@ -713,7 +715,7 @@ function openBuilder(ib) {
   openModal(editing ? T('editInbound') : T('createInbound'), body);
   $('bCancel').onclick = closeModal;
   $('bSave').onclick = () => saveInbound(editing ? ib.id : null);
-  ['bName', 'bAddress', 'bPort', 'bPath', 'bConfigCount', 'bDays', 'bLimitGb',
+  ['bName', 'bAddress', 'bPort', 'bPath', 'bHost', 'bSni', 'bConfigCount', 'bDays', 'bLimitGb',
    'bProto', 'bNet', 'bSec', 'bFp'].forEach((id) => {
     const el = $(id);
     if (el) el.addEventListener(el.tagName === 'SELECT' ? 'change' : 'input', syncBuilder);
@@ -723,7 +725,10 @@ function openBuilder(ib) {
 
 function syncBuilder() {
   const net = ($('bNet') || {}).value || 'ws';
+  const sec = ($('bSec') || {}).value || 'tls';
   show('grpPath', net === 'ws' || net === 'xhttp');
+  show('grpHost', net === 'ws' || net === 'xhttp');
+  show('grpSni', sec !== 'none');
   const proto = ($('bProto') || {}).value || 'vless';
   const w = $('bWarn');
   if (w) {
@@ -738,6 +743,7 @@ function builderPayload() {
   return {
     name: g('bName'), protocol: g('bProto'), network: g('bNet'), security: g('bSec'),
     address: g('bAddress'), port: g('bPort'), path: g('bPath'), fingerprint: g('bFp'),
+    host_header: g('bHost'), sni: g('bSni'),
     limit_value: g('bLimitGb'), expires_days: g('bDays'),
     client_limit: g('bClientLimit'), config_count: g('bConfigCount'),
     note: g('bNote'), enabled: $('bEnabled') ? $('bEnabled').checked : true,
