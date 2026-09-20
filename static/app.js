@@ -266,6 +266,7 @@ function applyPrefs(override) {
 const FONTS_LIST = [['inter', 'Inter'], ['vazirmatn', 'Vazirmatn'], ['poppins', 'Poppins'],
   ['roboto', 'Roboto'], ['space', 'Space Grotesk'], ['mono', 'JetBrains Mono'], ['system', 'System']];
 const BG_DEFAULTS = { background: 'none', bg_dim: 35, bg_blur: 0, bg_enabled: true };
+let APPR = null;          // appearance draft while the Settings page is open
 
 function bgUrl(P) {
   const id = (P || {}).background;
@@ -439,6 +440,7 @@ async function loadAll() {
   S.inbounds = inbounds.items || [];
   S.clients = clients.items || [];
   S.prefs = Object.assign({ language: 'en', theme: 'dark-green', style: 'solid', music: 'off', music_volume: 40 }, me.prefs || {});
+  APPR = null;   // let the Settings page re-read the saved appearance
   if (!S.clientsIb && S.inbounds.length) S.clientsIb = S.inbounds[0].id;
   applyPrefs();
   buildShell();
@@ -1033,6 +1035,7 @@ async function adminAction(act, username, enabled) {
 /* ================================================================== SETTINGS */
 function pageSettings(view) {
   const owner = isOwner();
+  if (!APPR) APPR = Object.assign({}, BG_DEFAULTS, S.prefs || {});
   view.innerHTML = `
     <div class="grid2">
       <div class="card">
@@ -1126,7 +1129,6 @@ function pageSettings(view) {
         <div id="diagBox2"><p class="muted"><span class="spin"></span></p></div></div>`}
     </div>`;
 
-  APPR = Object.assign({}, BG_DEFAULTS, S.prefs);
   $('sLang').onchange = (e) => { APPR.language = e.target.value; applyPrefs(APPR); };
   $('sStyle').onchange = (e) => { APPR.style = e.target.value; applyPrefs(APPR); };
   $('sFont').onchange = (e) => { APPR.font = e.target.value; applyPrefs(APPR); };
