@@ -59,3 +59,14 @@ Railway injects `$PORT` (8080 by convention) and forwards your domain to it — 
 itself, so there is nothing to configure. The domain's **target port** in Settings → Networking
 must equal `$PORT`. Public HTTPS is 443; inbounds should use port **443** too (paths separate them).
 Details: README_ENG.md §9.
+
+## Traffic & ping
+Upload and download are counted separately per client (real bytes from the relay) and shown in
+Clients, on inbound cards, on the subscription page and in the client's `Subscription-Userinfo` header.
+**Ping** is a server-side TCP connect (Clients/Inbounds → Ping). The Add-inbound form is now 10 inputs
+with plain selects; SNI/Host/ALPN/Reality/gRPC extras were removed from the UI. Details: README_ENG.md §10.
+## Appearance
+Settings → Appearance is per admin and saved with **Save appearance**: language, style,
+7 themes, 7 fonts, music, and a **background** (Default UI, three shipped wallpapers,
+or your own private upload with darken/blur and an on/off switch). Panel-name field and
+the inbound sub-link buttons were removed. Details: README_ENG.md §11.
