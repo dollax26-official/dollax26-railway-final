@@ -403,8 +403,7 @@ function buildShell() {
           <span class="pill link" id="langPill">${LANG === 'fa' ? 'EN' : 'فارسی'}</span>
           <span class="pill" id="hostPill">${esc((S.me && S.me.host) || 'host')}</span>
           <span class="pill ok">● ${T('running')}</span>
-        </div>
-      </header>
+        </div>      </header>
       <div class="content" id="page"></div>
     </main>
   </div>`;
@@ -723,6 +722,8 @@ function openBuilder(ib) {
   syncBuilder();
 }
 
+function show(id, on) { const el = $(id); if (el) el.style.display = on ? '' : 'none'; }
+
 function syncBuilder() {
   const net = ($('bNet') || {}).value || 'ws';
   const sec = ($('bSec') || {}).value || 'tls';
@@ -833,9 +834,9 @@ function pageClients(view) {
         <tbody>${list.map((c) => `<tr>
           <td><b style="font-weight:700">${esc(c.name)}</b><span class="sub mono">${esc(c.uuid)}</span></td>
           <td><span class="badge ${c.expired ? 'bad' : !c.enabled ? '' : c.over_quota ? 'warn' : 'ok'}">${c.expired ? T('expired') : !c.enabled ? T('disabled') : c.over_quota ? T('quota') : T('active')}</span></td>
-          <td class="mono muted" id="ping-${esc(c.id)}">—</td>
-          <td class="mono">${T('downShort')} ${esc(c.down_human || '0 B')}</td>
-          <td class="mono">${T('upShort')} ${esc(c.up_human || '0 B')}</td>
+          <td class="mono muted num" id="ping-${esc(c.id)}">—</td>
+          <td class="mono num">${T('downShort')} ${esc(c.down_human || '0 B')}</td>
+          <td class="mono num">${T('upShort')} ${esc(c.up_human || '0 B')}</td>
           <td style="min-width:130px"><span class="sub">${esc(c.used_human)}${c.limit_bytes ? ' / ' + esc(c.limit_human) : ' / ∞'}</span>
             <div class="bar"><i style="width:${c.limit_bytes ? Math.min(100, c.usage_pct) : 0}%"></i></div></td>
           <td class="muted">${esc(shortDate(c.expires_at))}</td>
