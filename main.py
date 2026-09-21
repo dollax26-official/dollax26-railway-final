@@ -51,9 +51,33 @@ APP_VERSION = "2026.09.19-r1"
 SESSION_SECRET = os.getenv("SECRET_KEY") or secrets.token_urlsafe(48)
 
 
+def _materialise_presets():
+    """Preset wallpapers may ship as static/bg/<name>.jpg.b64 — plain text, so they get into the
+    repo through any text-only upload path. Decode them once into the real files the picker serves."""
+    bgdir = os.path.join(_HERE, "static", "bg")
+    if not os.path.isdir(bgdir):
+        return
+    for name in sorted(os.listdir(bgdir)):
+        if not name.endswith(".b64"):
+            continue
+        target = os.path.join(bgdir, name[:-4])
+        if os.path.exists(target):
+            continue
+        try:
+            with open(os.path.join(bgdir, name), "r", encoding="utf-8") as fh:
+                raw = base64.b64decode(fh.read().strip())
+            with open(target, "wb") as fh:
+                fh.write(raw)
+            print(f"[dollax] preset background unpacked: {os.path.basename(target)} ({len(raw) // 1024} KB)",
+                  flush=True)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[dollax] preset {name} could not be unpacked: {exc}", flush=True)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     db.init_db()
+    _materialise_presets()
     yield
 
 
