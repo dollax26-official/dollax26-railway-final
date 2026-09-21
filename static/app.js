@@ -339,8 +339,19 @@ async function removeBackground() {
 async function persistAppearance() {
   Object.assign(S.prefs, APPR);
   applyPrefs(S.prefs);
-  try { await api('POST', '/api/me/prefs', S.prefs); toast(T('appearanceSaved'), 'ok'); }
-  catch (e) { toast(e.message, 'bad'); }
+  const btn = $('apprSave');
+  if (btn) { btn.disabled = true; btn.textContent = '…'; }
+  try {
+    await api('POST', '/api/me/prefs', S.prefs);
+    toast(T('appearanceSaved'), 'ok');
+    if (btn) {
+      btn.textContent = '✓ ' + T('saved');
+      setTimeout(() => { if (btn) { btn.textContent = T('saveAppearance'); btn.disabled = false; } }, 1500);
+    }
+  } catch (e) {
+    toast(e.message, 'bad');
+    if (btn) { btn.textContent = T('saveAppearance'); btn.disabled = false; }
+  }
 }
 
 function resetAppearance() {
