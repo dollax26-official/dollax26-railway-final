@@ -934,7 +934,12 @@ async function pingClient(id) {
 }
 
 function showClientLinks(c) {
-  const links = (c.links || []).map((l) => `<div class="cc-link"><code>${esc(l)}</code></div>`).join('');
+  const links = (c.links || []).map((l, i) => `
+    <div class="cfg-row">
+      <span class="cfg-idx">#${i + 1}</span>
+      <code class="cfg-code">${esc(l)}</code>
+      <button class="btn sm" data-copy="${esc(l)}">${T('copy')}</button>
+    </div>`).join('');
   openModal(c.name, `
     <div class="summary-strip">${esc(c.inbound_name)} · ${esc(c.used_human)}${c.limit_bytes ? ' / ' + esc(c.limit_human) : ' / ∞'} · ${esc(shortDate(c.expires_at))}</div>
     <div class="toolbar" style="margin:12px 0">
@@ -942,7 +947,9 @@ function showClientLinks(c) {
       <button class="btn sm" id="clRegen">${T('newSecret')}</button>
       <button class="btn sm" id="clReset">Reset</button>
     </div>
-    <div class="card">${links || '<span class="muted">—</span>'}</div>
+    <div class="card">
+        <div class="f-label" style="margin-bottom:10px">${(c.links || []).length} config(s)</div>
+        ${links || '<span class="muted">—</span>'}</div>
     <div class="modal-foot"><span class="grow"></span><button class="btn" id="clClose">${T('close')}</button></div>`);
   $('clClose').onclick = closeModal;
   $$('[data-copy]').forEach((b) => (b.onclick = () => copyText(b.dataset.copy)));
