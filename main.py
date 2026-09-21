@@ -52,26 +52,58 @@ SESSION_SECRET = os.getenv("SECRET_KEY") or secrets.token_urlsafe(48)
 
 
 def _materialise_presets():
-    """Preset wallpapers may ship as static/bg/<name>.jpg.b64 — plain text, so they get into the
-    repo through any text-only upload path. Decode them once into the real files the picker serves."""
+    """Preset wallpapers may arrive as plain text instead of binaries:
+
+      * static/bg/<name>.jpg.b64             (one base64 blob)
+      * static/bg/<name>.jpg.b64.partNN      (the same blob split into chunks)
+
+    so they can be stored through any text-only upload path. Decode them once into the
+    real image files the picker serves (static/bg/<name>.jpg).
+    """
     bgdir = os.path.join(_HERE, "static", "bg")
     if not os.path.isdir(bgdir):
         return
-    for name in sorted(os.listdir(bgdir)):
-        if not name.endswith(".b64"):
-            continue
-        target = os.path.join(bgdir, name[:-4])
+    names = sorted(os.listdir(bgdir))
+
+    def unpack(label, payload, target):
         if os.path.exists(target):
-            continue
+            return
         try:
-            with open(os.path.join(bgdir, name), "r", encoding="utf-8") as fh:
-                raw = base64.b64decode(fh.read().strip())
+            raw = base64.b64decode(payload)
             with open(target, "wb") as fh:
                 fh.write(raw)
-            print(f"[dollax] preset background unpacked: {os.path.basename(target)} ({len(raw) // 1024} KB)",
-                  flush=True)
+            print(f"[dollax] preset background ready: {os.path.basename(target)} "
+                  f"({len(raw) // 1024} KB, from {label})", flush=True)
         except Exception as exc:  # noqa: BLE001
-            print(f"[dollax] preset {name} could not be unpacked: {exc}", flush=True)
+            print(f"[dollax] preset {label} could not be decoded: {exc}", flush=True)
+
+    # 1. chunked carriers: <image>.partNN — concatenate in order
+    groups = {}
+    for name in names:
+        if ".part" in name:
+            base, _, tail = name.rpartition(".part")
+            if tail.isdigit():
+                groups.setdefault(base, []).append(name)
+    for base, parts in sorted(groups.items()):
+        target_name = base[:-4] if base.endswith(".b64") else base
+        try:
+            payload = "".join(
+                open(os.path.join(bgdir, p), "r", encoding="utf-8").read().strip()
+                for p in sorted(parts)
+            )
+            unpack(f"{len(parts)} part(s)", payload, os.path.join(bgdir, target_name))
+        except Exception as exc:  # noqa: BLE001
+            print(f"[dollax] preset parts for {base} failed: {exc}", flush=True)
+
+    # 2. single-file carriers: <image>.b64
+    for name in names:
+        if not name.endswith(".b64"):
+            continue
+        try:
+            payload = open(os.path.join(bgdir, name), "r", encoding="utf-8").read().strip()
+            unpack(os.path.basename(name), payload, os.path.join(bgdir, name[:-4]))
+        except Exception as exc:  # noqa: BLE001
+            print(f"[dollax] preset {name} could not be read: {exc}", flush=True)
 
 
 @asynccontextmanager
