@@ -92,8 +92,11 @@ def subscription_page(data):
     clients_html = ""
     for c in data.get("clients", []):
         links = "".join(
-            f'<div class="cc-link"><code>{esc(l["link"])}</code></div>'
-            for l in c.get("links", [])
+            f'<div class="cfg-row"><span class="cfg-idx">#{i}</span>'
+            f'<code class="cfg-code">{esc(l["link"])}</code>'
+            f'<button class="btn sm" type="button" data-copy="{esc(l["link"], quote=True)}">{t("copy")}</button>'
+            f'</div>'
+            for i, l in enumerate(c.get("links", []), 1)
         )
         clients_html += f"""
     <div class="client-card fade-in">
