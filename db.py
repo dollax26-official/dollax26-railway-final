@@ -240,6 +240,21 @@ CREATE TABLE IF NOT EXISTS tracks(
   size INTEGER NOT NULL DEFAULT 0,
   created TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS hosts(
+  id TEXT PRIMARY KEY,
+  address TEXT NOT NULL,
+  label TEXT NOT NULL DEFAULT '',
+  remark TEXT NOT NULL DEFAULT '',
+  enabled INTEGER NOT NULL DEFAULT 1,
+  created_by TEXT NOT NULL DEFAULT '',
+  created TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS client_links(
+  client_id TEXT NOT NULL,
+  linked_id TEXT NOT NULL,
+  created TEXT NOT NULL,
+  PRIMARY KEY(client_id, linked_id)
+);
 CREATE TABLE IF NOT EXISTS nodes(
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL DEFAULT '',
@@ -557,6 +572,90 @@ def delete_track(username, tid) -> bool:
         c.commit()
         return cur.rowcount > 0
 
+
+
+# ---------------------------------------------------------------- hosts (address pool)
+# An admin keeps the addresses they want their VLESS configs to hand out. An inbound can
+# then use any of them (stored in its clean_ips list) and the generated configs rotate
+# over exactly those addresses.
+def list_hosts():
+    with conn() as c:
+        rows = c.execute("SELECT * FROM hosts ORDER BY created").fetchall()
+    return [dict(r) for r in rows]
+
+
+def host_row(hid):
+    with conn() as c:
+        return c.execute("SELECT * FROM hosts WHERE id=?", (hid,)).fetchone()
+
+
+def add_host(address, label="", remark="", created_by=""):
+    hid = secrets.token_hex(8)
+    with _write_lock, conn() as c:
+        c.execute("INSERT INTO hosts(id,address,label,remark,enabled,created_by,created) VALUES(?,?,?,?,?,?,?)",
+                  (hid, str(address).strip()[:200], str(label or "")[:60], str(remark or "")[:200], 1,
+                   str(created_by or ""), now()))
+        c.commit()
+    return hid
+
+
+def update_host(hid, fields: dict) -> bool:
+    allowed = ("address", "label", "remark", "enabled")
+    sets, vals = [], []
+    for k in allowed:
+        if k in fields:
+            v = (1 if fields[k] else 0) if k == "enabled" else fields[k]
+            sets.append(f"{k}=?")
+            vals.append(v)
+    if not sets:
+        return False
+    vals.append(hid)
+    with _write_lock, conn() as c:
+        cur = c.execute(f"UPDATE hosts SET {', '.join(sets)} WHERE id=?", vals)
+        c.commit()
+        return cur.rowcount > 0
+
+
+def delete_host(hid) -> bool:
+    with _write_lock, conn() as c:
+        cur = c.execute("DELETE FROM hosts WHERE id=?", (hid,))
+        c.commit()
+        return cur.rowcount > 0
+
+
+# ---------------------------------------------------------------- client sub-links
+# Attach another client's subscription to this one: when the main client's sub is fetched,
+# the linked clients' configs are included as extra locations.
+def list_client_links(cid):
+    with conn() as c:
+        rows = c.execute("SELECT linked_id FROM client_links WHERE client_id=? ORDER BY created", (cid,)).fetchall()
+    return [r["linked_id"] for r in rows]
+
+
+def add_client_link(cid, linked) -> bool:
+    if not cid or not linked or cid == linked:
+        return False
+    with _write_lock, conn() as c:
+        c.execute("INSERT OR IGNORE INTO client_links(client_id,linked_id,created) VALUES(?,?,?)",
+                  (cid, linked, now()))
+        c.commit()
+    return True
+
+
+def remove_client_link(cid, linked) -> bool:
+    with _write_lock, conn() as c:
+        cur = c.execute("DELETE FROM client_links WHERE client_id=? AND linked_id=?", (cid, linked))
+        c.commit()
+        return cur.rowcount > 0
+
+
+def linked_clients(cid):
+    out = []
+    for lid in list_client_links(cid):
+        row = client_row(lid)
+        if row:
+            out.append(dict(row))
+    return out
 
 # ---------------------------------------------------------------- nodes (panel to panel)
 # A node is another Dollax panel in a different location. The connecting panel pulls that
