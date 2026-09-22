@@ -151,6 +151,10 @@ def build_config(inbounds, clients_by_inbound, base=None) -> dict:
             stream["httpupgradeSettings"] = {"path": ib.get("path") or f"/hu/{i}"}
             if ib.get("host_header"):
                 stream["httpupgradeSettings"]["host"] = ib["host_header"]
+        elif net == "raw":
+            # Xray's modern name for TCP: same idea, rawSettings carries the header type
+            stream["network"] = "raw"
+            stream["rawSettings"] = {"header": {"type": ib.get("header_type") or "none"}}
         elif net == "tcp":
             stream["network"] = "tcp"
             stream["tcpSettings"] = {"header": {"type": ib.get("header_type") or "none"}}
