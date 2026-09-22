@@ -53,6 +53,19 @@ const I18N = {
     bgPerUser: 'Your background is private to your account — other admins never see it.',
     bgEnabled: 'Use background', saveAppearance: 'Save appearance', resetAppearance: 'Reset',
     fontFamily: 'Font', bgUploaded: 'Background saved', bgRemoved: 'Background removed',
+    usePanelDomain: 'Use panel domain',
+    exportLedger: 'Export ledger (CSV)', lastGenerated: 'Last config generated',
+    addMusic: 'Add music', musicPerUser: 'Saved to your account - no re-upload next time.',
+    defaultMusic: 'Panel default track', noMusic: 'No tracks yet', useMusic: 'Use this track',
+    musicAdded: 'Music saved', musicRemoved: 'Track removed', readFailed: 'Could not read that file',
+    unsavedChanges: 'Unsaved changes', restartCore: 'Restart core', refresh: 'Refresh',
+    failed: 'Failed',
+    xrayNote: 'Xray-core ships inside the Docker image and is restarted automatically when inbounds change.',
+    wgPublicKey: 'WG server public key', wgAddress: 'WG peer address',
+    wgNote: 'WireGuard configs are generated for your WG server. Railway exposes TCP only, so the WG endpoint itself must run on a host with UDP + TUN.',
+    udpNote: 'QUIC/UDP protocol: configs and links are generated, but Railway only exposes TCP - point the endpoint at a host that allows UDP.',
+    proxyNote: 'SOCKS5/HTTP proxy links are generated per client (no TLS layer is added by the panel).',
+    fetches: 'subscription fetches', xrayCore: 'Xray-core',
     appearanceSaved: 'Appearance saved', appearanceReset: 'Appearance reset to defaults',
     uploading: 'Uploading…',
     created: 'Created', updated: 'Updated', deleted: 'Deleted', saved: 'Saved',
@@ -120,7 +133,7 @@ const I18N = {
     bgBlur: 'محو', uploadBg: 'آپلود تصویر', removeBg: 'حذف پس‌زمینه‌ی من',
     bgPerUser: 'پس‌زمینه‌ی شما فقط در حساب خودتان دیده می‌شود.',
     bgEnabled: 'استفاده از پس‌زمینه', saveAppearance: 'ذخیره‌ی ظاهر', resetAppearance: 'بازنشانی',
-    fontFamily: 'فونت', bgUploaded: 'پس‌زمینه ذخیره شد', bgRemoved: 'پس‌زمینه حذف شد',
+    fontFamily: 'فونت', bgUploaded: 'پس‌زمینه ذخیره شد', bgRemoved: 'پس‌زمینه حذف شد', usePanelDomain: 'دامنه‌ی پنل', exportLedger: 'خروجی لجند (CSV)', lastGenerated: 'آخرین زمان ساخت کانفیگ', fetches: 'دریافت سابسکریپشن', xrayCore: 'هستهٔ Xray', addMusic: 'افزودن موسیقی', musicPerUser: 'در حساب شما ذخیره می‌شود؛ دفعه بعد آپلود لازم نیست.', defaultMusic: 'آهنگ پیش‌فرض پنل', noMusic: 'هنوز آهنگی نیست', useMusic: 'استفاده از این آهنگ', musicAdded: 'موسیقی ذخیره شد', musicRemoved: 'آهنگ حذف شد', readFailed: 'خواندن فایل ممکن نشد', unsavedChanges: 'تغییرات ذخیره‌نشده', restartCore: 'راه‌اندازی مجدد هسته', refresh: 'بازخوانی', failed: 'ناموفق', xrayCore: 'هستهٔ Xray', xrayNote: 'هستهٔ Xray داخل ایمیج داکر است و با تغییر اینباندها خودکار ریستارت می‌شود.', wgPublicKey: 'کلید عمومی سرور WG', wgAddress: 'آدرس peer در WG', wgNote: 'کانفیگ‌های WireGuard برای سرور WG شما ساخته می‌شوند؛ Railway فقط TCP می‌دهد.', udpNote: 'پروتکل QUIC/UDP: کانفیگ‌ها ساخته می‌شوند اما Railway فقط TCP را باز می‌کند.', proxyNote: 'لینک‌های پروکسی SOCKS5/HTTP برای هر کلاینت ساخته می‌شوند.',
     appearanceSaved: 'ظاهر ذخیره شد', appearanceReset: 'ظاهر به حالت پیش‌فرض برگشت',
     uploading: 'در حال آپلود…',
     created: 'ساخته شد', updated: 'به‌روز شد', deleted: 'حذف شد', saved: 'ذخیره شد',
@@ -228,8 +241,20 @@ function musicLevel() {
   if (!isFinite(v)) v = 40;
   return Math.min(1, Math.max(0, v / 100));
 }
+function musicSrc() {
+  const t = (S.prefs && S.prefs.music_track) || 'default';
+  return (!t || t === 'default') ? '/static/lost-soul.mp3'
+                                 : '/api/me/tracks/' + encodeURIComponent(t) + '/audio';
+}
 function musicStart() {
-  if (!Music.el) { Music.el = new Audio('/static/lost-soul.mp3'); Music.el.loop = true; Music.el.preload = 'auto'; }
+  const src = musicSrc();
+  if (!Music.el || Music.src !== src) {
+    try { if (Music.el) Music.el.pause(); } catch (e) {}
+    Music.el = new Audio(src);
+    Music.el.loop = true;
+    Music.el.preload = 'auto';
+    Music.src = src;
+  }
   Music.el.volume = musicLevel();
   const p = Music.el.play();
   if (p && p.catch) p.catch(() => {});
@@ -336,6 +361,89 @@ async function removeBackground() {
   } catch (e) { toast(e.message, 'bad'); }
 }
 
+/* Everything below only touches the draft (APPR). The panel look changes when the admin
+   presses Save appearance - that is what the button is for, and what it now reliably does. */
+function markDraft() {
+  const b = $('apprDirty');
+  if (b) b.style.display = 'inline-block';
+}
+
+function tracksHtml() {
+  const cur = (APPR && APPR.music_track) || 'default';
+  const rows = (S.tracks || []).map((t) => `
+    <div class="trk ${cur === t.id ? 'on' : ''}">
+      <button class="btn sm" data-trk-use="${esc(t.id)}" title="${T('useMusic')}">${cur === t.id ? '\u2713' : '\u25b6'}</button>
+      <span class="trk-name">${esc(t.name || 'track')}</span>
+      <span class="muted trk-size">${Math.round((Number(t.size) || 0) / 1024)} KB</span>
+      <button class="btn sm danger" data-trk-del="${esc(t.id)}" title="${T('remove')}">\u2715</button>
+    </div>`).join('');
+  const def = `<div class="trk ${cur === 'default' ? 'on' : ''}">
+      <button class="btn sm" data-trk-use="default">${cur === 'default' ? '\u2713' : '\u25b6'}</button>
+      <span class="trk-name">${T('defaultMusic')}</span></div>`;
+  return def + (rows || `<div class="muted" style="font-size:10px;padding:5px">${T('noMusic')}</div>`);
+}
+
+function wireMusicLib() {
+  $$('[data-trk-use]').forEach((b) => (b.onclick = () => {
+    APPR.music_track = b.dataset.trkUse;
+    if (b.dataset.trkUse !== 'default') APPR.music = 'on';
+    markDraft();
+    const lib = $('musicLib');
+    if (lib) lib.innerHTML = tracksHtml();
+    wireMusicLib();
+  }));
+  $$('[data-trk-del]').forEach((b) => (b.onclick = async () => {
+    try {
+      const r = await api('DELETE', '/api/me/tracks/' + encodeURIComponent(b.dataset.trkDel));
+      S.tracks = r.items || [];
+      if (APPR.music_track === b.dataset.trkDel) APPR.music_track = 'default';
+      toast(T('musicRemoved'), 'ok');
+      const lib = $('musicLib');
+      if (lib) lib.innerHTML = tracksHtml();
+      wireMusicLib();
+    } catch (e) { toast(e.message, 'bad'); }
+  }));
+}
+
+async function uploadTrack(file) {
+  if (!file) return;
+  try {
+    toast(T('uploading'), '');
+    const dataUrl = await new Promise((resolve, reject) => {
+      const fr = new FileReader();
+      fr.onerror = () => reject(new Error(T('readFailed')));
+      fr.onload = () => resolve(fr.result);
+      fr.readAsDataURL(file);
+    });
+    const r = await api('POST', '/api/me/tracks', { data: dataUrl, name: file.name });
+    S.tracks = r.items || [];
+    APPR.music_track = r.id;
+    APPR.music = 'on';
+    markDraft();
+    toast(`${T('musicAdded')} (${Math.round(r.bytes / 1024)} KB)`, 'ok');
+    const lib = $('musicLib');
+    if (lib) lib.innerHTML = tracksHtml();
+    wireMusicLib();
+  } catch (e) { toast(e.message, 'bad'); }
+}
+
+async function loadXrayInto() {
+  const box = $('xrayBox');
+  if (!box) return;
+  try {
+    const st = await api('GET', '/api/xray/status');
+    const rows = [['mode', st.mode], ['binary', st.installed ? 'found' : 'missing'],
+                  ['running', st.running ? 'yes' : 'no'], ['inbounds', st.inbounds],
+                  ['base port', st.base_port], ['last sync', st.last_sync ? new Date(st.last_sync * 1000).toLocaleTimeString() : '-'],
+                  ['version', st.version || '-'], ['error', st.last_error || '-']];
+    box.innerHTML = rows.map(([k, v]) => `<div class="diag-row"><span class="muted">${esc(k)}</span>` +
+      `<code class="mono">${esc(String(v))}</code></div>`).join('') +
+      (st.hint ? `<p class="muted" style="font-size:10px;margin-top:8px">${esc(st.hint)}</p>` : '');
+  } catch (e) {
+    box.innerHTML = `<p class="muted" style="font-size:10.5px">${esc(e.message)}</p>`;
+  }
+}
+
 async function persistAppearance() {
   Object.assign(S.prefs, APPR);
   applyPrefs(S.prefs);
@@ -343,6 +451,8 @@ async function persistAppearance() {
   if (btn) { btn.disabled = true; btn.textContent = '…'; }
   try {
     await api('POST', '/api/me/prefs', S.prefs);
+    const dirty = $('apprDirty');
+    if (dirty) dirty.style.display = 'none';
     toast(T('appearanceSaved'), 'ok');
     if (btn) {
       btn.textContent = '✓ ' + T('saved');
@@ -374,9 +484,23 @@ function bgOptionsHtml() {
 }
 async function savePrefs(patch) {
   Object.assign(S.prefs, patch);
+  if (APPR) Object.assign(APPR, patch);      // keep the Settings draft in sync
   applyPrefs();
   render();
   try { await api('POST', '/api/me/prefs', S.prefs); } catch (e) { toast(e.message, 'bad'); }
+}
+
+/* highlight the picked theme / background in place (no full re-render, which used to look like a reset) */
+function markThemePicks() {
+  $$('[data-theme-pick]').forEach((b) => {
+    const t = THEMES.find((x) => x[0] === b.dataset.themePick);
+    b.style.borderColor = (APPR && APPR.theme === b.dataset.themePick)
+      ? (t ? t[1] : 'var(--accent)') : 'var(--line)';
+  });
+}
+
+function markBgPicks() {
+  $$('[data-bg-pick]').forEach((el) => el.classList.toggle('on', !!(APPR && APPR.background === el.dataset.bgPick)));
 }
 
 /* ------------------------------------------------------------------ shell */
@@ -441,6 +565,8 @@ async function loadAll() {
     api('GET', '/api/protocols'), api('GET', '/api/inbounds'), api('GET', '/api/clients'),
     api('GET', '/api/backgrounds'),
   ]);
+  try { const trk = await api('GET', '/api/me/tracks'); S.tracks = trk.items || []; }
+  catch (e) { S.tracks = S.tracks || []; }
   S.bgPresets = (backgrounds && backgrounds.presets) || [];
   S.bgCustom = !!(backgrounds && backgrounds.custom);
   S.me = me;
@@ -450,7 +576,8 @@ async function loadAll() {
   S.inbounds = inbounds.items || [];
   S.clients = clients.items || [];
   S.prefs = Object.assign({ language: 'en', theme: 'dark-green', style: 'solid', music: 'off', music_volume: 40 }, me.prefs || {});
-  APPR = null;   // let the Settings page re-read the saved appearance
+  // NOTE: the appearance draft (APPR) is deliberately NOT cleared here — clearing it made
+  // unsaved tweaks vanish whenever anything reloaded the data.
   if (!S.clientsIb && S.inbounds.length) S.clientsIb = S.inbounds[0].id;
   applyPrefs();
   buildShell();
@@ -684,22 +811,29 @@ function openBuilder(ib) {
   const b = ib || { port: (S.settings && S.settings.default_port) || 443, fingerprint: 'chrome', config_count: 1, enabled: 1 };
   const opt = (id, label, pairs, val) => `<label class="field"><span>${label}</span><select id="${id}">${
     pairs.map((p) => `<option value="${p[0]}" ${String(val) === String(p[0]) ? 'selected' : ''}>${p[1]}</option>`).join('')}</select></label>`;
+  const panelHost = ((S.settings && S.settings.public_base_url) || '')
+    .replace(/^https?:\/\//, '').replace(/\/.*$/, '')
+    || ((S.me && S.me.host) || '');
 
   const body = `<div class="builder">
     <div class="form-grid">
-      ${opt('bProto', T('protocol'), [['vless', 'VLESS'], ['vmess', 'VMess'], ['trojan', 'Trojan'], ['shadowsocks', 'Shadowsocks']], b.protocol || 'vless')}
-      ${opt('bNet', T('transport'), [['ws', 'WebSocket'], ['xhttp', 'XHTTP'], ['grpc', 'gRPC'], ['tcp', 'TCP']], b.network || 'ws')}
+      ${opt('bProto', T('protocol'), [['vless', 'VLESS'], ['vmess', 'VMess'], ['trojan', 'Trojan'], ['shadowsocks', 'Shadowsocks'], ['wireguard', 'WireGuard'], ['hysteria2', 'Hysteria2'], ['tuic', 'TUIC'], ['socks', 'SOCKS5'], ['http', 'HTTP']], b.protocol || 'vless')}
+      ${opt('bNet', T('transport'), [['ws', 'WebSocket'], ['xhttp', 'XHTTP'], ['grpc', 'gRPC'], ['httpupgrade', 'HTTPUpgrade'], ['tcp', 'TCP']], b.network || 'ws')}
       ${opt('bSec', T('security'), [['tls', 'TLS'], ['reality', 'Reality'], ['none', 'None']], b.security || 'tls')}
       ${opt('bFp', T('fFp'), FP_CHOICES.map((f) => [f, f]), b.fingerprint || 'chrome')}
     </div>
 
     <div class="form-grid" style="margin-top:12px">
       <label class="field"><span>${T('fName')}</span><input id="bName" value="${esc(b.name || '')}" placeholder="Frankfurt-01"></label>
-      <label class="field"><span>${T('fAddress')}</span><input id="bAddress" value="${esc(b.address || '')}" placeholder="panel.up.railway.app"></label>
+      <label class="field"><span>${T('fAddress')}</span>
+        <span class="inline-input"><input id="bAddress" value="${esc(b.address || '')}" placeholder="${esc(panelHost || 'panel.up.railway.app')}">
+        <button class="btn sm" type="button" id="bUsePanel">${T('usePanelDomain')}</button></span></label>
       <label class="field"><span>${T('fPort')}</span><input id="bPort" type="number" min="1" max="65535" value="${esc(b.port || 443)}"></label>
       <label class="field" id="grpPath"><span>${T('fPath')}</span><input id="bPath" value="${esc(b.path || '')}" placeholder="/ws/x (empty = auto)"></label>
       <label class="field" id="grpHost"><span>${T('fHost')}</span><input id="bHost" value="${esc(b.host_header || '')}" placeholder="empty = address"></label>
       <label class="field" id="grpSni"><span>${T('fSni')}</span><input id="bSni" value="${esc(b.sni || '')}" placeholder="empty = host"></label>
+      <label class="field" id="grpWgPub"><span>${T('wgPublicKey')}</span><input id="bWgPub" value="${esc(b.wg_public_key || '')}" placeholder="server public key"></label>
+      <label class="field" id="grpWgAddr"><span>${T('wgAddress')}</span><input id="bWgAddr" value="${esc(b.wg_address || '')}" placeholder="10.7.0.2/32"></label>
     </div>
 
     <div class="form-grid" style="margin-top:12px">
@@ -725,8 +859,14 @@ function openBuilder(ib) {
   openModal(editing ? T('editInbound') : T('createInbound'), body);
   $('bCancel').onclick = closeModal;
   $('bSave').onclick = () => saveInbound(editing ? ib.id : null);
+  if ($('bUsePanel')) $('bUsePanel').onclick = () => {
+    $('bAddress').value = panelHost;
+    if ($('bHost')) $('bHost').value = panelHost;
+    if ($('bSni')) $('bSni').value = panelHost;
+    syncBuilder();
+  };
   ['bName', 'bAddress', 'bPort', 'bPath', 'bHost', 'bSni', 'bConfigCount', 'bDays', 'bLimitGb',
-   'bProto', 'bNet', 'bSec', 'bFp'].forEach((id) => {
+   'bProto', 'bNet', 'bSec', 'bFp', 'bWgPub', 'bWgAddr'].forEach((id) => {
     const el = $(id);
     if (el) el.addEventListener(el.tagName === 'SELECT' ? 'change' : 'input', syncBuilder);
   });
@@ -738,14 +878,22 @@ function show(id, on) { const el = $(id); if (el) el.style.display = on ? '' : '
 function syncBuilder() {
   const net = ($('bNet') || {}).value || 'ws';
   const sec = ($('bSec') || {}).value || 'tls';
-  show('grpPath', net === 'ws' || net === 'xhttp');
-  show('grpHost', net === 'ws' || net === 'xhttp');
-  show('grpSni', sec !== 'none');
+  const urlLike = net === 'ws' || net === 'xhttp' || net === 'httpupgrade';
+  show('grpPath', urlLike);
+  show('grpHost', urlLike);
+  show('grpSni', sec !== 'none' && net !== 'xhttp');
   const proto = ($('bProto') || {}).value || 'vless';
+  show('grpWgPub', proto === 'wireguard');
+  show('grpWgAddr', proto === 'wireguard');
   const w = $('bWarn');
   if (w) {
-    w.textContent = (proto === 'vless' || proto === 'trojan') ? T('vlessNote') : T('bridgeNote');
-    w.style.color = (proto === 'vless' || proto === 'trojan') ? 'var(--muted)' : 'var(--warning)';
+    const external = (proto === 'wireguard' || proto === 'hysteria2' || proto === 'tuic');
+    const fallback = (proto === 'socks' || proto === 'http');
+    if (proto === 'wireguard') w.textContent = T('wgNote');
+    else if (external) w.textContent = T('udpNote');
+    else if (fallback) w.textContent = T('proxyNote');
+    else w.textContent = (proto === 'vless' || proto === 'trojan') ? T('vlessNote') : T('bridgeNote');
+    w.style.color = external ? 'var(--warning)' : 'var(--muted)';
   }
   builderSummary();
 }
@@ -756,6 +904,7 @@ function builderPayload() {
     name: g('bName'), protocol: g('bProto'), network: g('bNet'), security: g('bSec'),
     address: g('bAddress'), port: g('bPort'), path: g('bPath'), fingerprint: g('bFp'),
     host_header: g('bHost'), sni: g('bSni'),
+    wg_public_key: g('bWgPub'), wg_address: g('bWgAddr'),
     limit_value: g('bLimitGb'), expires_days: g('bDays'),
     client_limit: g('bClientLimit'), config_count: g('bConfigCount'),
     note: g('bNote'), enabled: $('bEnabled') ? $('bEnabled').checked : true,
@@ -837,6 +986,7 @@ function pageClients(view) {
         <button class="btn sm" id="cInboundCfg">${T('config')}</button>
         <button class="btn sm" id="cInboundSub">${T('copySub')}</button>
         <button class="btn sm" id="cInboundPage">${T('openSub')}</button>
+        <button class="btn sm" id="clLedger">${T('exportLedger')}</button>
       </div>` : ''}
     </div>
     <div class="tblwrap">
@@ -862,6 +1012,7 @@ function pageClients(view) {
 
   if ($('cIb')) $('cIb').onchange = (e) => { S.clientsIb = e.target.value; pageClients(view); };
   if ($('cAdd')) $('cAdd').onclick = () => openClientDrawer(ib);
+  if ($('clLedger')) $('clLedger').onclick = () => window.open('/api/ledger.csv', '_blank');
   if ($('cInboundCfg')) $('cInboundCfg').onclick = () => showInboundConfig(ib);
   if ($('cInboundSub')) $('cInboundSub').onclick = () => copyText(ib.sub_url);
   if ($('cInboundPage')) $('cInboundPage').onclick = () => window.open(`/info/${ib.sub_token}`, '_blank');
@@ -950,6 +1101,10 @@ function showClientLinks(c) {
     <div class="card">
         <div class="f-label" style="margin-bottom:10px">${(c.links || []).length} config(s)</div>
         ${links || '<span class="muted">—</span>'}</div>
+    <div class="muted" style="font-size:10.5px;margin-top:12px">
+      ${T('lastGenerated')}: ${esc(c.last_config_at ? String(c.last_config_at).slice(0, 19).replace('T', ' ') : '\u2014')}
+      &nbsp;·&nbsp; ${c.sub_fetches || 0} ${T('fetches')}
+    </div>
     <div class="modal-foot"><span class="grow"></span><button class="btn" id="clClose">${T('close')}</button></div>`);
   $('clClose').onclick = closeModal;
   $$('[data-copy]').forEach((b) => (b.onclick = () => copyText(b.dataset.copy)));
@@ -1086,6 +1241,12 @@ function pageSettings(view) {
             <label class="chk"><input type="checkbox" id="sMusic" ${APPR.music === 'on' ? 'checked' : ''}> ${T('musicOn')}</label>
             <input type="range" id="sVol" min="0" max="100" value="${esc(APPR.music_volume || 40)}">
             <span class="muted" id="volVal">${esc(APPR.music_volume || 40)}</span>
+          </div>
+          <div class="music-lib" id="musicLib" style="margin-top:10px">${tracksHtml()}</div>
+          <div class="toolbar" style="margin-top:9px">
+            <label class="btn sm" style="cursor:pointer">${T('addMusic')}
+              <input type="file" id="trkFile" accept="audio/*" style="display:none"></label>
+            <span class="muted" style="font-size:10px">${T('musicPerUser')}</span>
           </div></div>
 
         <div class="field" style="margin-top:14px"><span>${T('background')}</span>
@@ -1110,6 +1271,7 @@ function pageSettings(view) {
         <div class="toolbar" style="margin-top:14px">
           <button class="btn primary" id="apprSave">${T('saveAppearance')}</button>
           <button class="btn" id="apprReset">${T('resetAppearance')}</button>
+          <span class="badge warn" id="apprDirty" style="display:none">${T('unsavedChanges')}</span>
         </div>
       </div>
 
@@ -1137,34 +1299,29 @@ function pageSettings(view) {
       </div>
 
       ${owner ? `<div class="card">
-        <div class="card-head"><h2>${T('settingsBridge')}</h2></div>
-        <div class="form-grid">
-          <label class="field"><span>${T('bridgeHost')}</span><input id="bHost2" value="${esc(S.settings.xray_bridge_host || '')}"></label>
-          <label class="field"><span>${T('bridgePort')}</span><input id="bPort2" value="${esc(S.settings.xray_bridge_port || '8080')}"></label>
+        <div class="card-head"><h2>${T('xrayCore')}</h2></div>
+        <div id="xrayBox"><p class="muted"><span class="spin"></span></p></div>
+        <div class="toolbar" style="margin-top:11px">
+          <button class="btn sm" id="xrayRefresh">${T('refresh')}</button>
+          <button class="btn sm" id="xrayRestart">${T('restartCore')}</button>
         </div>
-        <div class="toolbar" style="margin-top:12px">
-          <button class="btn" id="bSave2">${T('save')}</button>
-          <button class="btn" id="bLoad">${T('generate')}</button>
-          <button class="btn sm" id="bCopyCfg">${T('copyConfig')}</button>
-          <button class="btn sm" id="bCopyCaddy">${T('copyCaddy')}</button>
-          <button class="btn sm" id="bCopySteps">${T('copySteps')}</button>
-        </div>
-        <div class="live-preview" style="margin-top:11px"><code id="bOut">—</code></div>
+        <p class="muted" style="font-size:10px;margin-top:9px">${T('xrayNote')}</p>
       </div>` : `<div class="card"><div class="card-head"><h2>${T('diagnostics')}</h2></div>
         <div id="diagBox2"><p class="muted"><span class="spin"></span></p></div></div>`}
     </div>`;
 
-  $('sLang').onchange = (e) => { APPR.language = e.target.value; applyPrefs(APPR); };
-  $('sStyle').onchange = (e) => { APPR.style = e.target.value; applyPrefs(APPR); };
-  $('sFont').onchange = (e) => { APPR.font = e.target.value; applyPrefs(APPR); };
-  $$('[data-theme-pick]').forEach((b) => (b.onclick = () => { APPR.theme = b.dataset.themePick; applyPrefs(APPR); render(); }));
-  $('sMusic').onchange = (e) => { APPR.music = e.target.checked ? 'on' : 'off'; applyPrefs(APPR); };
-  $('sVol').oninput = (e) => { $('volVal').textContent = e.target.value; if (Music.el) Music.el.volume = Math.min(1, Math.max(0, e.target.value / 100)); };
-  $('sVol').onchange = (e) => { APPR.music_volume = Number(e.target.value); };
-  $('sDim').oninput = (e) => { APPR.bg_dim = Number(e.target.value); $('dimVal').textContent = e.target.value + '%'; applyPrefs(APPR); };
-  $('sBlur').oninput = (e) => { APPR.bg_blur = Number(e.target.value); $('blurVal').textContent = e.target.value + 'px'; applyPrefs(APPR); };
-  $('bgEnabled').onchange = (e) => { APPR.bg_enabled = e.target.checked; applyPrefs(APPR); };
-  $$('[data-bg-pick]').forEach((el) => (el.onclick = () => { APPR.background = el.dataset.bgPick; APPR.bg_enabled = true; applyPrefs(APPR); render(); }));
+  $('sLang').onchange = (e) => { APPR.language = e.target.value; markDraft(); };
+  $('sStyle').onchange = (e) => { APPR.style = e.target.value; markDraft(); };
+  $('sFont').onchange = (e) => { APPR.font = e.target.value; markDraft(); };
+  $$('[data-theme-pick]').forEach((b) => (b.onclick = () => { APPR.theme = b.dataset.themePick; markThemePicks(); markDraft(); }));
+  $('sMusic').onchange = (e) => { APPR.music = e.target.checked ? 'on' : 'off'; markDraft(); };
+  $('sVol').oninput = (e) => { APPR.music_volume = Number(e.target.value); $('volVal').textContent = e.target.value; markDraft(); };
+  $('sDim').oninput = (e) => { APPR.bg_dim = Number(e.target.value); $('dimVal').textContent = e.target.value + '%'; markDraft(); };
+  $('sBlur').oninput = (e) => { APPR.bg_blur = Number(e.target.value); $('blurVal').textContent = e.target.value + 'px'; markDraft(); };
+  $('bgEnabled').onchange = (e) => { APPR.bg_enabled = e.target.checked; markDraft(); };
+  $$('[data-bg-pick]').forEach((el) => (el.onclick = () => { APPR.background = el.dataset.bgPick; APPR.bg_enabled = true; markBgPicks(); markDraft(); }));
+  $('trkFile').onchange = (e) => uploadTrack(e.target.files && e.target.files[0]);
+  wireMusicLib();
   $('bgFile').onchange = (e) => uploadBackground(e.target.files && e.target.files[0]);
   $('bgRemove').onclick = () => removeBackground();
   $('apprSave').onclick = () => persistAppearance();
@@ -1182,20 +1339,15 @@ function pageSettings(view) {
       loadAll();
     } catch (e) { toast(e.message, 'bad'); }
   };
-  if ($('bSave2')) $('bSave2').onclick = async () => {
+  if ($('xrayRefresh')) $('xrayRefresh').onclick = () => loadXrayInto();
+  if ($('xrayRestart')) $('xrayRestart').onclick = async () => {
     try {
-      await api('POST', '/api/settings', { xray_bridge_host: $('bHost2').value, xray_bridge_port: $('bPort2').value });
-      toast(T('saved'), 'ok');
+      const r = await api('POST', '/api/xray/restart');
+      toast(r.ok ? `${T('restartCore')}: ${T('saved')} (${r.inbounds})` : (r.reason || T('failed')), r.ok ? 'ok' : 'bad');
+      loadXrayInto();
     } catch (e) { toast(e.message, 'bad'); }
   };
-  if ($('bLoad')) $('bLoad').onclick = async () => {
-    S.bridge = await api('GET', '/api/xray/setup');
-    $('bOut').textContent = S.bridge.config;
-    toast(T('generated') || T('saved'), 'ok');
-  };
-  if ($('bCopyCfg')) $('bCopyCfg').onclick = () => copyText((S.bridge && S.bridge.config) || '');
-  if ($('bCopyCaddy')) $('bCopyCaddy').onclick = () => copyText((S.bridge && S.bridge.caddyfile) || '');
-  if ($('bCopySteps')) $('bCopySteps').onclick = () => copyText((S.bridge && S.bridge.steps) || '');
+  if ($('xrayBox')) loadXrayInto();
   if ($('diagBox2')) loadDiagInto('diagBox2');
 }
 
