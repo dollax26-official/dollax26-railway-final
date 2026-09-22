@@ -51,9 +51,9 @@ async def _pump_ws_to_tcp(ws, writer, result: RelayResult, first_payload: bytes,
             result.sent += len(first_payload)
         while True:
             msg = await ws.receive()
-            if msg.get("type") == "websocket.disconnect":
+            if not isinstance(msg, dict) or msg.get("type") == "websocket.disconnect":
                 break
-            data = msg.get("bytes")
+            data = msg.get("bytes") or (msg.get("text") or "").encode()
             if data:
                 writer.write(data)
                 await writer.drain()
@@ -97,13 +97,19 @@ async def handle(ws, inbound: dict, client: dict, on_bytes=None, already_accepte
 
     if not already_accepted:
         await ws.accept()
-    try:
-        first = await ws.receive()
-    except Exception:
-        await ws.close(code=1002)
-        return result
-
-    data = first.get("bytes") if isinstance(first, dict) else None
+    # read the first frame, tolerating leading empty/ping frames (some clients send those)
+    data = None
+    for _ in range(4):
+        try:
+            msg = await ws.receive()
+        except Exception:
+            break
+        if not isinstance(msg, dict) or msg.get("type") == "websocket.disconnect":
+            break
+        chunk = msg.get("bytes") or (msg.get("text") or "").encode()
+        if chunk:
+            data = chunk
+            break
     if not data:
         await ws.close(code=1002)
         return result
@@ -113,16 +119,19 @@ async def handle(ws, inbound: dict, client: dict, on_bytes=None, already_accepte
         if not parsed or parsed["uuid"] != client["uuid"]:
             await ws.close(code=1008)
             return result
-        if parsed["command"] != 1:
-            await ws.close(code=1003)   # UDP is not supported by this relay
+        if parsed["command"] not in (1, 3):
+            await ws.close(code=1003)
             return result
-        header = b"\x00\x00\x00"        # VLESS success response (no addons)
+        # VLESS response header = version(0) + addon length(0) => exactly TWO bytes.
+        # It used to be three, which leaked a NUL byte into the payload and corrupted
+        # the very first byte the client received (fatal for a TLS handshake).
+        header = b"\x00\x00"
     elif protocol_name == "trojan":
         parsed = protocol.parse_trojan_header(data, protocol.client_secret(inbound, client["uuid"]))
         if not parsed:
             await ws.close(code=1008)
             return result
-        if parsed["command"] != 1:
+        if parsed["command"] not in (1, 3):
             await ws.close(code=1003)
             return result
         header = None
@@ -136,7 +145,14 @@ async def handle(ws, inbound: dict, client: dict, on_bytes=None, already_accepte
         return result
 
     try:
-        reader, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout=15)
+        reader, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout=10)
+        try:
+            sock = writer.get_extra_info("socket")
+            if sock:
+                import socket as _socket
+                sock.setsockopt(_socket.IPPROTO_TCP, _socket.TCP_NODELAY, 1)
+        except Exception:
+            pass
     except Exception as exc:  # noqa: BLE001
         log.warning("connect %s:%s failed: %s", host, port, exc)
         await ws.close(code=1011)
@@ -162,4 +178,55 @@ async def handle(ws, inbound: dict, client: dict, on_bytes=None, already_accepte
                 on_bytes(*result.take(), True)
             except Exception:
                 pass
+    return result
+
+
+# ---------------------------------------------------------------- Xray bridge
+async def bridge(ws, upstream_url: str, on_bytes=None):
+    """Pipe a client WebSocket into a local WebSocket (the bundled Xray-core inbound).
+
+    The panel stays in the path, so quotas, connection/IP limits and traffic accounting keep
+    working, while Xray-core does the protocol work (VMess, Shadowsocks, Reality, UDP, ...).
+    """
+    import websockets
+
+    result = RelayResult()
+    try:
+        async with websockets.connect(upstream_url, max_size=None, open_timeout=10) as up:
+            async def client_to_core():
+                while True:
+                    msg = await ws.receive()
+                    if not isinstance(msg, dict) or msg.get("type") == "websocket.disconnect":
+                        break
+                    chunk = msg.get("bytes") or (msg.get("text") or "").encode()
+                    if not chunk:
+                        continue
+                    await up.send(chunk)
+                    result.sent += len(chunk)
+                    if on_bytes and result.pending() >= REPORT_EVERY:
+                        on_bytes(*result.take(), False)
+
+            async def core_to_client():
+                async for message in up:
+                    data = message if isinstance(message, (bytes, bytearray)) else str(message).encode()
+                    if not data:
+                        continue
+                    await ws.send_bytes(bytes(data))
+                    result.recv += len(data)
+                    if on_bytes and result.pending() >= REPORT_EVERY:
+                        on_bytes(*result.take(), False)
+
+            await asyncio.gather(client_to_core(), core_to_client())
+    except Exception as exc:  # noqa: BLE001
+        result.error = result.error or f"xray bridge: {exc.__class__.__name__}"
+    finally:
+        if on_bytes and result.pending() > 0:
+            try:
+                on_bytes(*result.take(), True)
+            except Exception:
+                pass
+        try:
+            await ws.close()
+        except Exception:
+            pass
     return result
