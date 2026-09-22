@@ -1,8 +1,8 @@
+# syntax=docker/dockerfile:1
 FROM python:3.12-slim
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PIP_NO_CACHE_DIR=1 \
     DATA_DIR=/data \
     PORT=8080 \
     XRAY_MODE=auto \
@@ -13,56 +13,52 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-# ---------------------------------------------------------------- protocol cores
-# Two engines are bundled so every protocol the panel offers has a real implementation:
+# ---------------------------------------------------------------- protocol core(s)
+# Xray-core is what actually serves this panel (VLESS/VMess/Trojan/Shadowsocks + Reality,
+# over WebSocket / XHTTP / gRPC / HTTPUpgrade / TCP). It is fetched with Python's own urllib,
+# so the image only needs `ca-certificates` from apt - no curl/tar layer, no wasted seconds.
 #
-#   * Xray-core -> VLESS / VMess / Trojan / Shadowsocks (+ Reality) over WebSocket, XHTTP,
-#                  gRPC, HTTPUpgrade, TCP. The panel drives it: it keeps the public HTTPS
-#                  port for the WebSocket protocols and gives every Reality inbound its own
-#                  raw TCP port (Reality cannot pass through a TLS-terminating proxy).
-#   * sing-box  -> Hysteria2 / TUIC / ShadowTLS (QUIC/UDP family). Railway exposes TCP, so
-#                  those become reachable when the same image runs where UDP is allowed.
+# sing-box (Hysteria2 / TUIC / ShadowTLS) is opt-in: Railway exposes TCP only, so those
+# protocols cannot be reached from this container anyway and fetching it costs ~30 MB per
+# build. Enable it with the build arg INSTALL_SINGBOX=1 if you run this image where UDP works.
 #
-# EVERY download is optional: each step runs inside `( ... ) || echo WARNING` so a blocked
-# or moved release asset can never fail the image build. The panel detects what is present
-# and reports it in Settings -> Xray-core.
+# Every step is wrapped in `( ... ) || echo WARNING`, so a blocked or moved download can
+# never fail the build. The panel reports what it found in Settings -> Xray-core.
 ARG XRAY_VERSION=v26.3.27
 ARG SINGBOX_VERSION=1.14.1
+ARG INSTALL_SINGBOX=0
 RUN set -eux; \
     ( apt-get update \
-      && apt-get install -y --no-install-recommends ca-certificates curl tar \
+      && apt-get install -y --no-install-recommends ca-certificates \
       && rm -rf /var/lib/apt/lists/* ) \
-      || echo "WARNING: could not install curl/tar - skipping the bundled cores"; \
-    ( mkdir -p /tmp/sbx && curl -fsSL --retry 3 -o /tmp/xray.zip \
+      || echo "WARNING: ca-certificates unavailable"; \
+    ( python -c "import io,os,urllib.request,zipfile,sys;os.makedirs('/tmp/sbx',exist_ok=True);d=urllib.request.urlopen(sys.argv[1],timeout=180).read();zipfile.ZipFile(io.BytesIO(d)).extractall('/tmp/sbx');print('xray downloaded',len(d)//1024,'KB')" \
         "https://github.com/XTLS/Xray-core/releases/download/${XRAY_VERSION}/Xray-linux-64.zip" \
-      && python -c "import zipfile; zipfile.ZipFile('/tmp/xray.zip').extractall('/tmp/sbx')" \
       && install -m 0755 /tmp/sbx/xray /usr/local/bin/xray \
       && /usr/local/bin/xray version ) \
-      || echo "WARNING: Xray-core ${XRAY_VERSION} not installed - VMess/Shadowsocks/xhttp/gRPC need an external core"; \
-    ( mkdir -p /tmp/sb && curl -fsSL --retry 3 -o /tmp/sb.tgz \
-        "https://github.com/SagerNet/sing-box/releases/download/v${SINGBOX_VERSION}/sing-box-${SINGBOX_VERSION}-linux-amd64.tar.gz" \
-      && tar -xzf /tmp/sb.tgz -C /tmp/sb \
-      && install -m 0755 "$(find /tmp/sb -type f -name sing-box | head -n1)" /usr/local/bin/sing-box \
-      && /usr/local/bin/sing-box version ) \
-      || echo "WARNING: sing-box ${SINGBOX_VERSION} not installed - Hysteria2/TUIC/ShadowTLS stay link-only"; \
-    rm -rf /tmp/sbx /tmp/sb /tmp/xray.zip /tmp/sb.tgz; \
-    echo "cores present:"; ls -l /usr/local/bin/xray /usr/local/bin/sing-box 2>/dev/null || true
+      || echo "WARNING: Xray-core not installed - VMess/Shadowsocks/xhttp/gRPC need an external core"; \
+    if [ "${INSTALL_SINGBOX}" = "1" ]; then \
+      ( python -c "import io,os,tarfile,urllib.request,sys;os.makedirs('/tmp/sb',exist_ok=True);d=urllib.request.urlopen(sys.argv[1],timeout=240).read();tf=tarfile.open(fileobj=io.BytesIO(d));names=[n for n in tf.getnames() if n.split('/')[-1]=='sing-box' and not n.endswith('/')];open('/tmp/sb/sing-box','wb').write(tf.extractfile(names[0]).read());print('sing-box downloaded',len(d)//1024,'KB')" \
+          "https://github.com/SagerNet/sing-box/releases/download/v${SINGBOX_VERSION}/sing-box-${SINGBOX_VERSION}-linux-amd64.tar.gz" \
+        && install -m 0755 /tmp/sb/sing-box /usr/local/bin/sing-box \
+        && /usr/local/bin/sing-box version ) \
+        || echo "WARNING: sing-box not installed - Hysteria2/TUIC/ShadowTLS stay link-only"; \
+    fi; \
+    rm -rf /tmp/sbx /tmp/sb; \
+    ls -l /usr/local/bin/xray /usr/local/bin/sing-box 2>/dev/null || true
+
+# ---------------------------------------------------------------- python deps
+# Requirements on their own layer (code changes never re-install them) plus a pip cache
+# mount, so a redeploy reuses the wheels instead of downloading them again.
+COPY requirements.txt .
+RUN --mount=type=cache,target=/root/.cache/pip pip install -r requirements.txt
 
 # ---------------------------------------------------------------- app
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
 COPY . .
-
-# /data is the Railway volume mount; create it so the default path always exists.
-RUN mkdir -p /data
+# pre-compile once at build time: slightly faster first request on a cold container
+RUN python -m compileall -q /app > /dev/null 2>&1 || true; mkdir -p /data
 
 EXPOSE 8080
 
 # Liveness is probed by the platform (railway.json -> deploy.healthcheckPath: /health).
-# No Docker-level HEALTHCHECK on purpose: a duplicated probe can mark a healthy
-# container unhealthy and make the proxy answer "Application failed to respond".
-
-# No shell, no quoting, no globs: python resolves $PORT itself (see main.py __main__) and
-# starts the bundled Xray-core from the panel's lifespan hook.
 CMD ["python", "main.py"]
