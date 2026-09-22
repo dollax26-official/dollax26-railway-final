@@ -170,6 +170,8 @@ def _tpl_aurora(data):
     {clients_html or f'<div class="empty"><b>{t("noClients")}</b>{t("subEmptyHint")}</div>'}
   </div>
 
+  {info_block(t, esc, data)}
+
   <div class="card fade-in" style="margin-top:14px">
     <div class="f-label">{t("appsTitle")}</div>
     <div style="margin-top:8px">{apps_html(t, esc, "btn sm")}</div>
@@ -244,11 +246,29 @@ def apps_html(t, esc, cls="app-chip") -> str:
 
 
 
+
+def info_block(t, esc, data) -> str:
+    """The 'account info' entry: a config that never connects, shown apart from the real ones."""
+    link = str(data.get("info_link") or "")
+    if not link:
+        return ""
+    name = config_name(link)
+    return ('<div class="sc-card info-card">'
+            '<div class="sc-head"><span class="sc-name">' + esc(t("infoTitle")) + '</span>'
+            '<span class="sc-grow"></span>'
+            '<span class="sc-badge">' + esc(t("infoBadge")) + '</span></div>'
+            '<div class="sc-row"><span class="sc-cfgname">' + esc(name) + '</span>'
+            '<button class="sc-btn" type="button" data-copy="' + esc(link, quote=True) + '">' +
+            t("copy") + '</button></div></div>')
+
+
 # ---------------------------------------------------------------- template registry
 # Designs live as plain HTML files in static/sub-templates/ (edit them freely).
 # Placeholders use string.Template syntax: $panel, $title, $endpoint, $protocol,
 # $clients, $configs, $pct, $used, $up, $down, $remaining, $expires, $sub_url,
 # $sub_clash, $sub_singbox, $qr, $tags, $cards, $lang, $dir, $theme, $style, $l_*.
+INFO_CARD_CSS = ".info-card{border-style:dashed;opacity:.92}"
+
 TEMPLATE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "sub-templates")
 
 TEMPLATE_LIST = [
@@ -376,7 +396,7 @@ def subscription_page(data, template="aurora"):
         tags = _tags_html(t, esc, data)
         cards = _cards_html(t, esc, clients)
     return Template(raw).safe_substitute({**shared, **_label_map(t), "tags": tags, "cards": cards,
-                                           "apps": apps_html(t, esc)})
+                                           "apps": apps_html(t, esc), "info": info_block(t, esc, data)})
 
 
 
@@ -392,6 +412,8 @@ _FA = {
     "protocol": "پروتکل", "clients": "کاربران", "configNodes": "تعداد کانفیگ",
     "noClients": "کاربری وجود ندارد", "subEmptyHint": "از پنل یک کاربر به این اینباند اضافه کنید.",
     "appsTitle": "برنامه‌هایی که این ساب‌سکریپشن را می‌پذیرند",
+    "infoTitle": "اطلاعات حساب", "infoBadge": "سرور نیست",
+    "infoNote": "این ورودی فقط وضعیت حساب را نشان می‌دهد (ترافیک، مصرف، روز باقی‌مانده) و هرگز وصل نمی‌شود؛ به همین دلیل از کانفیگ‌های اصلی جدا شده است.",
     "appsMobile": "موبایل", "appsDesktop": "کامپیوتر / لپ‌تاپ",
     "subFooter": "این صفحه مخصوص این اینباند است",
 }
@@ -406,6 +428,8 @@ _EN = {
     "protocol": "Protocol", "clients": "Clients", "configNodes": "Configs",
     "noClients": "No clients", "subEmptyHint": "Add a client to this inbound from the panel.",
     "appsTitle": "Apps that accept this subscription",
+    "infoTitle": "Account info", "infoBadge": "not a server",
+    "infoNote": "This entry only reports your account state (traffic, usage, days). It never connects, so it is kept separate from your working configs.",
     "appsMobile": "Mobile", "appsDesktop": "PC / laptop",
     "subFooter": "This page belongs to this inbound",
 }
