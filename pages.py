@@ -98,9 +98,10 @@ def _tpl_aurora(data):
             link = l if isinstance(l, str) else str((l or {}).get("link") or "")
             if not link:
                 continue
+            label = config_name(link) if not isinstance(l, dict) else str(l.get("name") or config_name(link))
             rows.append(
                 f'<div class="cfg-row"><span class="cfg-idx">#{i}</span>'
-                f'<code class="cfg-code">{esc(link)}</code>'
+                f'<span class="cfg-name" title="{esc(link, quote=True)}">{esc(label)}</span>'
                 f'<button class="btn sm" type="button" data-copy="{esc(link, quote=True)}">{t("copy")}</button>'
                 f'</div>')
         links = "".join(rows)
@@ -169,6 +170,11 @@ def _tpl_aurora(data):
     {clients_html or f'<div class="empty"><b>{t("noClients")}</b>{t("subEmptyHint")}</div>'}
   </div>
 
+  <div class="card fade-in" style="margin-top:14px">
+    <div class="f-label">{t("appsTitle")}</div>
+    <div style="margin-top:8px">{apps_html(t, esc, "btn sm")}</div>
+  </div>
+
   <p class="muted" style="text-align:center;margin-top:20px;font-size:10px">
     {t("subFooter")} &middot; {esc(data["panel_name"])}
   </p>
@@ -194,6 +200,47 @@ document.addEventListener('click', function (e) {{
 </script>"""
     return _doc(f"{data['panel_name']} — {data['title']}", body, lang=lang,
                 theme=data.get("theme", "dark-green"), style=data.get("ui_style", "solid"))
+
+
+
+
+# ---------------------------------------------------------------- config names + app links
+def config_name(link: str) -> str:
+    """The display name of a config = the `#fragment` of the URL (fallback: short link)."""
+    from urllib.parse import unquote
+    txt = str(link or "")
+    if "#" in txt:
+        name = unquote(txt.split("#", 1)[1]).strip()
+        if name:
+            return name
+    return (txt[:26] + "…") if len(txt) > 28 else txt
+
+
+APPS = [
+    ("mobile", "v2rayNG", "https://github.com/2dust/v2rayNG"),
+    ("mobile", "v2box", "https://play.google.com/store/apps/details?id=dev.hexasoftware.v2box"),
+    ("mobile", "Clash Meta", "https://github.com/MetaCubeX/ClashMetaForAndroid"),
+    ("mobile", "Hiddify", "https://github.com/hiddify/hiddify-app"),
+    ("mobile", "NekoBox", "https://github.com/MatsuriDayo/NekoBoxForAndroid"),
+    ("mobile", "Streisand", "https://apps.apple.com/app/streisand/id6450534064"),
+    ("mobile", "Shadowrocket", "https://apps.apple.com/app/shadowrocket/id932747118"),
+    ("desktop", "v2rayN", "https://github.com/2dust/v2rayN"),
+    ("desktop", "Hiddify", "https://github.com/hiddify/hiddify-app"),
+    ("desktop", "NekoRay", "https://github.com/MatsuriDayo/nekoray"),
+    ("desktop", "Clash Verge Rev", "https://github.com/clash-verge-rev/clash-verge-rev"),
+    ("desktop", "V2RayXS (macOS)", "https://github.com/tzmax/V2RayXS"),
+]
+
+
+def apps_html(t, esc, cls="app-chip") -> str:
+    """Download links for the clients that understand this subscription."""
+    rows = []
+    for group, label in (("mobile", t("appsMobile")), ("desktop", t("appsDesktop"))):
+        chips = "".join(
+            f'<a class="{cls}" href="{esc(url)}" target="_blank" rel="noopener noreferrer">{esc(name)}</a>'
+            for kind, name, url in APPS if kind == group)
+        rows.append(f'<div class="app-group"><span class="app-group-k">{esc(label)}</span>{chips}</div>')
+    return "".join(rows)
 
 
 
@@ -231,6 +278,7 @@ def _label_map(t) -> dict:
         "l_copied": t("copied"), "l_sub": t("genericSub"), "l_clash": t("clashSub"),
         "l_singbox": t("singboxSub"), "l_clients": t("clients"), "l_configs": t("configNodes"),
         "l_none": t("noClients"), "l_footer": t("subFooter"),
+        "l_apps": t("appsTitle"),
     }
 
 
@@ -257,12 +305,13 @@ def _cards_html(t, esc, clients, wrap="sc-card", wide=False):
     for c in clients:
         rows = []
         for i, l in enumerate(c.get("links") or [], 1):
-            l = l if isinstance(l, str) else str((l or {}).get("link") or "")
-            if not l:
+            raw = l if isinstance(l, str) else str((l or {}).get("link") or "")
+            if not raw:
                 continue
+            label = config_name(raw) if isinstance(l, str) else str(l.get("name") or config_name(raw))
             rows.append('<div class="sc-row"><span class="sc-idx">#' + str(i) + '</span>' +
-                        '<code class="sc-code">' + esc(l) + '</code>' +
-                        '<button class="sc-btn" type="button" data-copy="' + esc(l, quote=True) + '">' +
+                        '<span class="sc-cfgname" title="' + esc(raw, quote=True) + '">' + esc(label) + '</span>' +
+                        '<button class="sc-btn" type="button" data-copy="' + esc(raw, quote=True) + '">' +
                         t("copy") + '</button></div>')
         if not rows:
             rows = ['<div class="sc-row"><span class="sc-idx">-</span><code class="sc-code">' +
@@ -326,7 +375,8 @@ def subscription_page(data, template="aurora"):
     else:
         tags = _tags_html(t, esc, data)
         cards = _cards_html(t, esc, clients)
-    return Template(raw).safe_substitute({**shared, **_label_map(t), "tags": tags, "cards": cards})
+    return Template(raw).safe_substitute({**shared, **_label_map(t), "tags": tags, "cards": cards,
+                                           "apps": apps_html(t, esc)})
 
 
 
@@ -341,6 +391,8 @@ _FA = {
     "used": "مصرف", "remaining": "باقیمانده", "expires": "انقضا", "upload": "آپلود", "download": "دانلود",
     "protocol": "پروتکل", "clients": "کاربران", "configNodes": "تعداد کانفیگ",
     "noClients": "کاربری وجود ندارد", "subEmptyHint": "از پنل یک کاربر به این اینباند اضافه کنید.",
+    "appsTitle": "برنامه‌هایی که این ساب‌سکریپشن را می‌پذیرند",
+    "appsMobile": "موبایل", "appsDesktop": "کامپیوتر / لپ‌تاپ",
     "subFooter": "این صفحه مخصوص این اینباند است",
 }
 _EN = {
@@ -353,6 +405,8 @@ _EN = {
     "used": "Used", "remaining": "Remaining", "expires": "Expires", "upload": "Upload", "download": "Download",
     "protocol": "Protocol", "clients": "Clients", "configNodes": "Configs",
     "noClients": "No clients", "subEmptyHint": "Add a client to this inbound from the panel.",
+    "appsTitle": "Apps that accept this subscription",
+    "appsMobile": "Mobile", "appsDesktop": "PC / laptop",
     "subFooter": "This page belongs to this inbound",
 }
 
