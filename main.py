@@ -1,5 +1,5 @@
 """
-Dollax Panel — FastAPI application (Railway build).
+Dollax Panel - FastAPI application (Railway build).
 
 This file is the Python counterpart of the Cloudflare Worker's fetch() router.
 Everything the Worker exposed under /api/* is re-implemented here against SQLite,
@@ -37,6 +37,7 @@ from starlette.middleware.sessions import SessionMiddleware
 import db
 import protocol
 import relay
+import xray_core
 from pages import dashboard_html, login_html, subscription_page
 
 try:  # real QR codes on the subscription page (graceful without it)
@@ -77,7 +78,7 @@ def _materialise_presets():
         except Exception as exc:  # noqa: BLE001
             print(f"[dollax] preset {label} could not be decoded: {exc}", flush=True)
 
-    # 1. chunked carriers: <image>.partNN — concatenate in order
+    # 1. chunked carriers: <image>.partNN - concatenate in order
     groups = {}
     for name in names:
         if ".part" in name:
@@ -110,7 +111,26 @@ def _materialise_presets():
 async def lifespan(app: FastAPI):
     db.init_db()
     _materialise_presets()
-    yield
+    _xray_task = None
+    try:
+        inbounds = _xray_inbounds()
+        res = xray_core.start(inbounds, _xray_clients(inbounds))
+        if res.get("ok"):
+            print(f"[dollax] xray-core started: {len(res.get('port_map') or {})} inbound(s), "
+                  f"base port {xray_core.base_port()}", flush=True)
+        elif xray_core.enabled() and res.get("reason"):
+            print(f"[dollax] xray-core not running: {res['reason']}", flush=True)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[dollax] xray-core startup skipped: {exc}", flush=True)
+    try:
+        _xray_task = asyncio.create_task(_xray_watch())
+    except Exception:  # noqa: BLE001
+        _xray_task = None
+    try:
+        yield
+    finally:
+        if _xray_task:
+            _xray_task.cancel()
 
 
 app = FastAPI(title="Dollax Panel", docs_url=None, redoc_url=None, lifespan=lifespan)
@@ -122,7 +142,7 @@ if os.path.isdir(_STATIC_DIR):
 else:
     # Never kill startup because an asset folder is missing (e.g. a repo push that
     # forgot static/): warn loudly and keep the panel reachable so it can be fixed.
-    print("[dollax] WARNING: the 'static' folder is missing next to main.py — the UI will "
+    print("[dollax] WARNING: the 'static' folder is missing next to main.py - the UI will "
           "load unstyled and /static/* will 404. Upload style.css, app.js (and optionally "
           "lost-soul.mp3) into static/. See README §8.", flush=True)
 
@@ -198,11 +218,90 @@ def client_ip(request: Request) -> str:
     return str(request.headers.get("x-real-ip") or (request.client.host if request.client else "") or "")[:64]
 
 
+def client_ip_ws(ws: WebSocket) -> str:
+    """Same, for a WebSocket connection."""
+    fwd = ws.headers.get("x-forwarded-for") or ""
+    if fwd:
+        return fwd.split(",")[0].strip()[:64]
+    return str(ws.headers.get("x-real-ip") or (ws.client.host if ws.client else "") or "")[:64]
+
+
+# ------------------------------------------------ live connection / IP accounting
+# (Vodiwalker enforces per-client connection and IP limits in its relay; so do we now.)
+_ACTIVE_CONNS = {}          # client key -> open connections
+_SEEN_IPS = {}              # client key -> {ip: last_seen_ts}
+_IP_WINDOW = 900           # seconds an IP keeps counting toward the ip limit
+
+
+def _client_key(client_row) -> str:
+    return str(client_row.get("id") or ("inbound:" + str(client_row.get("inbound_id") or "")))
+
+
+def _admit(client_row, ip: str):
+    """Return (ok, reason). Enforces connection_limit and ip_limit before the tunnel opens."""
+    key = _client_key(client_row)
+    limit_conn = int(client_row.get("connection_limit") or 0)
+    limit_ip = int(client_row.get("ip_limit") or 0)
+    if limit_conn and _ACTIVE_CONNS.get(key, 0) >= limit_conn:
+        return False, f"connection limit ({limit_conn}) reached"
+    if limit_ip:
+        seen = _SEEN_IPS.setdefault(key, {})
+        ts_now = time.time()
+        for k, ts in list(seen.items()):
+            if ts_now - ts > _IP_WINDOW:
+                seen.pop(k, None)
+        if ip and ip not in seen and len(seen) >= limit_ip:
+            return False, f"ip limit ({limit_ip}) reached"
+        if ip:
+            seen[ip] = ts_now
+    _ACTIVE_CONNS[key] = _ACTIVE_CONNS.get(key, 0) + 1
+    return True, ""
+
+
+def _release(client_row):
+    key = _client_key(client_row)
+    _ACTIVE_CONNS[key] = max(0, _ACTIVE_CONNS.get(key, 1) - 1)
+
+
+def _looks_like_ip(value) -> bool:
+    parts = str(value or "").strip().split(".")
+    return len(parts) == 4 and all(p.isdigit() and 0 <= int(p) <= 255 for p in parts)
+
+
+def client_remark(cl: dict) -> str:
+    """What the node name should say inside a subscription: traffic left + days left."""
+    limit = int(cl.get("limit_bytes") or 0)
+    used = int(cl.get("used_bytes") or 0)
+    parts = [f"{protocol.fmt_bytes(max(0, limit - used))} left" if limit else "\u221e traffic"]
+    if cl.get("expires_at"):
+        d = db.days_left(cl.get("expires_at"))
+        if d is None:
+            pass
+        elif d < 0:
+            parts.append("expired")
+        elif d == 0:
+            parts.append("ends today")
+        else:
+            parts.append(f"{d}d left")
+    return " · ".join(parts)
+
+
 def effective_host(request: Request) -> str:
     base = db.setting("public_base_url", "").strip().rstrip("/")
     if base:
         return urlparse(base).hostname or base
-    return (request.headers.get("x-forwarded-host") or request.headers.get("host") or "localhost").split(":")[0]
+    host = (request.headers.get("x-forwarded-host") or request.headers.get("host") or "localhost").split(":")[0]
+    proto = (request.headers.get("x-forwarded-proto") or request.url.scheme or "http").split(",")[0].strip()
+    # Remember the public host the first time we are reached over https, so generated
+    # configs keep pointing at the real panel address (Railway domain / custom domain)
+    # even when a later request arrives with a different Host header.
+    if proto == "https" and "." in host and "localhost" not in host and not host.replace(".", "").isdigit():
+        try:
+            db.set_setting("public_base_url", f"https://{host}")
+            print(f"[dollax] detected public base URL: https://{host}", flush=True)
+        except Exception:  # noqa: BLE001
+            pass
+    return host
 
 
 def base_url(request: Request) -> str:
@@ -220,7 +319,8 @@ def inbound_dict(row) -> dict:
     d["allow_insecure"] = bool(d.get("allow_insecure"))
     d["clean_ips"] = db.json_list(d.get("clean_ips"))
     d["native"] = protocol.clean_protocol(d.get("protocol")) in protocol.NATIVE_PROTOCOLS
-    d["warn"] = "" if d["native"] else "Needs the external Xray bridge (VMess/SS are not WebSocket protocols)."
+    d["wg_conf"] = protocol.clean_protocol(d.get("protocol")) == "wireguard"
+    d["warn"] = "" if d["native"] else "Served by the bundled Xray-core (not a WebSocket protocol)."
     d["used_bytes"] = int(d.get("used_bytes") or 0)
     d["up_bytes"] = int(d.get("up_bytes") or 0)
     d["down_bytes"] = int(d.get("down_bytes") or 0)
@@ -244,6 +344,8 @@ def client_dict(row, request: Request, inbound=None) -> dict:
     d["up_human"] = protocol.fmt_bytes(d["up_bytes"])
     d["down_human"] = protocol.fmt_bytes(d["down_bytes"])
     d["limit_human"] = protocol.fmt_bytes(d.get("limit_bytes") or 0)
+    d["last_config_at"] = d.get("last_config_at") or ""
+    d["sub_fetches"] = int(d.get("sub_fetches") or 0)
     d["days_left"] = db.days_left(d.get("expires_at"))
     d["expired"] = db.is_expired(d.get("expires_at"))
     d["over_quota"] = bool(d.get("limit_bytes")) and d["used_bytes"] >= int(d["limit_bytes"])
@@ -254,9 +356,16 @@ def client_dict(row, request: Request, inbound=None) -> dict:
     d["inbound_protocol"] = ib.get("protocol", "")
     host = effective_host(request)
     ips = d["clean_ips"] or ib.get("clean_ips") or []
-    links = protocol.link_list(ib, d["uuid"], host, ips) if ib else []
-    d["links"] = links
-    d["link"] = links[0] if links else ""
+    if ib and protocol.clean_protocol(ib.get("protocol")) == "wireguard":
+        # WireGuard is not a URI: hand back a ready-to-use .conf block instead
+        d["links"] = [protocol.wireguard_conf(ib, d["uuid"], host, d.get("name") or "")]
+        d["link"] = d["links"][0]
+        d["wg_conf"] = True
+    else:
+        links = protocol.link_list(ib, d["uuid"], host, ips, remark=client_remark(d)) if ib else []
+        d["links"] = links
+        d["link"] = links[0] if links else ""
+        d["wg_conf"] = False
     d["sub_url"] = f"{base_url(request)}/sub/{d.get('sub_token') or ''}"
     d["usage_pct"] = int(min(100, (d["used_bytes"] / int(d["limit_bytes"]) * 100))) if d.get("limit_bytes") else 0
     return d
@@ -347,7 +456,7 @@ async def api_me_prefs(request: Request):
     d = await request.json()
     prefs = db.get_prefs(current_user(request))
     prefs.update({k: v for k, v in (d or {}).items()
-                 if k in ("language", "theme", "style", "font", "music", "music_volume",
+                 if k in ("language", "theme", "style", "font", "music", "music_volume", "music_track",
                           "accent", "motion", "background", "bg_dim", "bg_blur", "bg_enabled")})
     db.set_prefs(current_user(request), prefs)
     return {"ok": True, "prefs": prefs}
@@ -426,6 +535,72 @@ async def api_delete_background(request: Request):
     return {"ok": True, "removed": removed, "prefs": prefs}
 
 
+# ------------------------------------------------- per-admin music library
+TRACK_MIME = {"audio/mpeg", "audio/mp3", "audio/ogg", "audio/wav", "audio/x-wav", "audio/mp4",
+              "audio/aac", "audio/webm", "audio/flac"}
+TRACK_MAX = 9_000_000
+
+
+@app.get("/api/me/tracks")
+async def api_list_tracks(request: Request):
+    if not authed(request):
+        return unauthorized()
+    return {"items": db.list_tracks(current_user(request))}
+
+
+@app.post("/api/me/tracks")
+async def api_add_track(request: Request):
+    """Upload a track into the signed-in admin's own library (stored, not re-uploaded)."""
+    if not authed(request):
+        return unauthorized()
+    d = await request.json()
+    payload = str((d or {}).get("data") or "")
+    mime = str((d or {}).get("mime") or "audio/mpeg").lower()
+    name = str((d or {}).get("name") or "track")[:120]
+    b64 = payload
+    if payload.startswith("data:") and "," in payload:
+        head, b64 = payload.split(",", 1)
+        mime = (head[5:].split(";")[0] or mime).lower()
+    if mime not in TRACK_MIME:
+        return JSONResponse({"error": "Only audio files (mp3, ogg, wav, m4a, webm, flac)."}, status_code=400)
+    try:
+        raw = base64.b64decode(b64, validate=False)
+    except Exception:
+        return JSONResponse({"error": "That is not valid audio data."}, status_code=400)
+    if not raw:
+        return JSONResponse({"error": "Empty file."}, status_code=400)
+    if len(raw) > TRACK_MAX:
+        return JSONResponse({"error": f"File too large ({len(raw) // 1024} KB). Keep it under 9 MB."},
+                            status_code=413)
+    tid = db.add_track(current_user(request), name, mime, raw)
+    db.log(current_user(request), "music-upload", f"{name} ({len(raw) // 1024} KB)", ip=client_ip(request))
+    return {"ok": True, "id": tid, "bytes": len(raw), "items": db.list_tracks(current_user(request))}
+
+
+@app.get("/api/me/tracks/{tid}/audio")
+async def api_track_audio(request: Request, tid: str):
+    if not authed(request):
+        return unauthorized()
+    row = db.get_track(current_user(request), tid)
+    if not row:
+        return Response(status_code=204)
+    return Response(content=bytes(row["bytes"]), media_type=row["mime"] or "audio/mpeg",
+                    headers={"Cache-Control": "no-store"})
+
+
+@app.delete("/api/me/tracks/{tid}")
+async def api_delete_track(request: Request, tid: str):
+    if not authed(request):
+        return unauthorized()
+    removed = db.delete_track(current_user(request), tid)
+    prefs = db.get_prefs(current_user(request))
+    if prefs.get("music_track") == tid:
+        prefs["music_track"] = "default"
+        db.set_prefs(current_user(request), prefs)
+    db.log(current_user(request), "music-remove", tid, ip=client_ip(request))
+    return {"ok": True, "removed": removed, "items": db.list_tracks(current_user(request)), "prefs": prefs}
+
+
 # ---------------------------------------------------------------- overview
 @app.get("/api/summary")
 async def api_summary(request: Request):
@@ -474,13 +649,29 @@ async def api_diagnostics(request: Request):
         add("warn", "No client yet", "An inbound alone has no credentials.", "Clients → Add client")
     else:
         add("ok", f"{len(clients)} client(s)", f"{sum(1 for c in clients if c['enabled'])} enabled")
-    bad = [i["name"] for i in inbounds if protocol.clean_protocol(i["protocol"]) not in protocol.NATIVE_PROTOCOLS]
-    if bad:
-        add("warn", "Inbound(s) need the Xray bridge",
-            f"{', '.join(bad)} are VMess/Shadowsocks — this app can only relay VLESS/Trojan over WebSocket.",
-            "Inbounds → the inbound → Copy Xray bridge bundle.")
+    xst = xray_core.status()
+    non_native = [i["name"] for i in inbounds
+                  if protocol.clean_protocol(i["protocol"]) not in protocol.NATIVE_PROTOCOLS]
+    if xst["running"]:
+        add("ok", "Xray-core is running",
+            f"{xst['inbounds']} inbound(s) bridged on localhost:{xst['base_port']}+ | {xst['version']}")
+        if non_native:
+            add("ok", f"{len(non_native)} inbound(s) served by Xray-core",
+                f"{', '.join(non_native[:6])} - VMess/Shadowsocks and UDP are handled by the core.")
+    elif non_native:
+        add("warn", "Xray-core is not running",
+            f"{', '.join(non_native[:6])} are VMess/Shadowsocks and the core is unavailable "
+            f"({xst['last_error'] or 'not installed'}).",
+            "Set XRAY_MODE=on (it is installed in the image) or run an external Xray bridge.")
     else:
-        add("ok", "All inbounds are natively served", "VLESS/Trojan over WebSocket.")
+        add("ok", "All inbounds served by the built-in relay", "VLESS/Trojan over WebSocket.")
+    host_touched = [i["name"] for i in inbounds if i.get("address") and _looks_like_ip(i["address"])]
+    if host_touched:
+        add("warn", "Inbound address is a bare IP",
+            f"{', '.join(host_touched[:4])} - clients will connect to that IP, which only works if that "
+            "IP actually fronts this panel (e.g. a Cloudflare-proxied domain). Railway's own domain works "
+            "directly: leave Address empty or use the panel domain.",
+            "Inbounds → Edit → Address → Use panel domain")
     with_clean = [i["name"] for i in inbounds if db.json_list(i.get("clean_ips"))]
     if with_clean:
         add("ok", f"{len(with_clean)} inbound(s) rotate clean IPs", ", ".join(with_clean[:6]))
@@ -489,7 +680,8 @@ async def api_diagnostics(request: Request):
             "Inbounds → Edit → Clean IPs")
     if not (request.headers.get("x-forwarded-proto") or "").startswith("https") and "https" not in str(request.url):
         add("warn", "Served over plain HTTP", "TLS is terminated by Railway's edge in production.", "")
-    add("ok", "Relay", "VLESS-WS + Trojan-WS are served by this app; UDP and VMess/SS are not.")
+    add("ok", "Relay",
+        "VLESS/Trojan over WebSocket are served by the panel itself; with Xray-core running, VMess, Shadowsocks and UDP work through it as well.")
     return {"checks": checks, "version": APP_VERSION}
 
 
@@ -547,6 +739,8 @@ def _inbound_payload(d: dict, existing=None):
         "reality_spider_x": str(d.get("reality_spider_x", existing["reality_spider_x"] if existing else "/") or "/")[:120],
         "ss_method": str(d.get("ss_method", existing["ss_method"] if existing else "chacha20-ietf-poly1305") or "chacha20-ietf-poly1305")[:60],
         "ss_password": str(d.get("ss_password", existing["ss_password"] if existing else "") or "")[:120],
+        "wg_public_key": str(d.get("wg_public_key", existing["wg_public_key"] if existing else "") or "")[:120],
+        "wg_address": str(d.get("wg_address", existing["wg_address"] if existing else "") or "")[:120],
         "fragment": str(d.get("fragment", existing["fragment"] if existing else "") or "")[:120],
         "note": str(d.get("note", existing["note"] if existing else "") or "")[:500],
     }
@@ -568,6 +762,16 @@ def _inbound_payload(d: dict, existing=None):
     fields["config_count"] = as_int(d.get("config_count", existing["config_count"] if existing else 1), 1, 1, 40)
     fields["enabled"] = 1 if as_bool(d.get("enabled", existing["enabled"] if existing else 1), True) else 0
     # sensible defaults: a blank host header / SNI follows the inbound address
+    if fields["address"]:
+        # keep just the host: strip a scheme, a path and a port that duplicates the port field
+        addr = str(fields["address"]).strip()
+        for prefix in ("https://", "http://"):
+            if addr.lower().startswith(prefix):
+                addr = addr[len(prefix):]
+        addr = addr.split("/")[0].strip()
+        if addr.endswith(":" + str(fields["port"])):
+            addr = addr[: -(len(str(fields["port"])) + 1)]
+        fields["address"] = addr
     if fields["address"]:
         if not fields["host_header"]:
             fields["host_header"] = fields["address"]
@@ -826,7 +1030,7 @@ async def api_reset_usage(request: Request, cid: str):
 
 # ---------------------------------------------------------------- ping (latency)
 async def _tcp_ping(host: str, port: int, timeout: float = 4.0) -> dict:
-    """Server-side TCP connect latency — the same mechanism Vodiwalker uses (/api/network/tcp-ping)."""
+    """Server-side TCP connect latency - the same mechanism Vodiwalker uses (/api/network/tcp-ping)."""
     started = time.perf_counter()
     try:
         reader, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout=timeout)
@@ -879,6 +1083,30 @@ async def api_client_ping(request: Request, cid: str):
     return await _tcp_ping(ib["address"] or effective_host(request), as_int(ib["port"], 443, 1, 65535))
 
 
+# ---------------------------------------------------------------- ledger
+@app.get("/api/ledger")
+async def api_ledger(request: Request):
+    """Durable per-client record: quota, consumed, remaining, expiry, last config generation."""
+    if not authed(request):
+        return unauthorized()
+    return {"generated_at": db.now(), "items": db.ledger_rows()}
+
+
+@app.get("/api/ledger.csv")
+async def api_ledger_csv(request: Request):
+    if not authed(request):
+        return unauthorized()
+    cols = ["id", "name", "inbound_name", "protocol", "network", "security", "state",
+            "limit_human", "used_human", "remaining_human", "days_left", "expires_at",
+            "sub_fetches", "last_config_at", "last_seen", "created", "uuid", "sub_token"]
+    rows = db.ledger_rows()
+    lines = [",".join(cols)]
+    for r in rows:
+        lines.append(",".join('"' + str(r.get(c, "")).replace('"', '""') + '"' for c in cols))
+    return Response("\n".join(lines) + "\n", media_type="text/csv",
+                    headers={"Content-Disposition": 'attachment; filename="dollax-ledger.csv"'})
+
+
 # ---------------------------------------------------------------- settings
 @app.get("/api/settings")
 async def api_get_settings(request: Request):
@@ -909,6 +1137,31 @@ async def api_set_settings(request: Request):
     s = db.all_settings()
     s.pop("iran_ips_v1", None)
     return {"ok": True, "settings": s}
+
+
+@app.get("/api/xray/status")
+async def api_xray_status(request: Request):
+    if not authed(request):
+        return unauthorized()
+    st = xray_core.status()
+    st["hint"] = ("Xray-core is bundled in the Docker image (XRAY_MODE=auto): VMess, "
+                  "Shadowsocks, Reality and UDP work through the same public port."
+                  if st["running"] else
+                  "Xray-core is not running. It ships with the image; set XRAY_MODE=on (or install "
+                  "'xray' in PATH) so VMess/Shadowsocks/xhttp/gRPC inbounds work.")
+    return st
+
+
+@app.post("/api/xray/restart")
+async def api_xray_restart(request: Request):
+    if not authed(request):
+        return unauthorized()
+    if not is_owner(request):
+        return JSONResponse({"error": "Owner only."}, status_code=403)
+    res = _xray_restart()
+    db.log(current_user(request), "xray-restart", str(res.get("reason") or "ok"), ip=client_ip(request))
+    return {"ok": bool(res.get("ok")), "status": xray_core.status(),
+            "reason": res.get("reason") or "", "inbounds": len(res.get("port_map") or {})}
 
 
 @app.get("/api/xray/setup")
@@ -1006,12 +1259,17 @@ def _sub_entries(token: str):
     client = db.client_by_token(token)
     if client:
         ib = db.inbound_row(client["inbound_id"])
+        if ib:
+            db.touch_client_config(client["id"])       # ledger: config handed out
         return ([(dict(ib), dict(client))] if ib else []), f"client:{client['name']}"
     inbound = db.inbound_by_token(token)
     if inbound:
-        # the inbound itself is always a usable config — clients are optional extras
+        # the inbound itself is always a usable config - clients are optional extras
         entries = [(dict(inbound), _inbound_as_client(inbound))]
-        entries += [(dict(inbound), dict(c)) for c in db.clients_for_inbound(inbound["id"])]
+        clients = db.clients_for_inbound(inbound["id"])
+        for c in clients:
+            db.touch_client_config(c["id"])
+        entries += [(dict(inbound), dict(c)) for c in clients]
         return entries, f"inbound:{inbound['name']}"
     return [], ""
 
@@ -1019,7 +1277,10 @@ def _sub_entries(token: str):
 def _sub_lines(entries, host):
     lines = []
     for ib, cl in entries:
-        lines += protocol.link_list(ib, cl["uuid"], host, cl.get("clean_ips") or ib.get("clean_ips"))
+        if protocol.clean_protocol(ib.get("protocol")) == "wireguard":
+            continue        # .conf text cannot live in a URI subscription
+        lines += protocol.link_list(ib, cl["uuid"], host, cl.get("clean_ips") or ib.get("clean_ips"),
+                                    remark=client_remark(cl))
     return lines
 
 
@@ -1133,7 +1394,9 @@ async def subscription_info(token: str, request: Request):
         c_up = int(cl.get("up_bytes") or 0)
         c_down = int(cl.get("down_bytes") or 0)
         c_limit = int(cl.get("limit_bytes") or 0)
-        links = protocol.link_list(ib, cl["uuid"], host, cl.get("clean_ips") or ib.get("clean_ips"))
+        links = protocol.link_list(ib, cl["uuid"], host,
+                                   cl.get("clean_ips") or ib.get("clean_ips"),
+                                   remark=client_remark(cl))
         expired = db.is_expired(cl.get("expires_at"))
         if not cl.get("enabled"):
             status, status_class = "disabled", ""
@@ -1184,6 +1447,70 @@ async def subscription_info(token: str, request: Request):
     return HTMLResponse(subscription_page(data))
 
 
+# ---------------------------------------------------------------- xray-core
+# The panel is the single public port; Xray-core (bundled in the image) does the protocol
+# work for VMess / Shadowsocks / Reality / UDP and the extra transports (xhttp, gRPC,
+# HTTPUpgrade). Bytes still flow through the panel so quotas and per-client accounting work.
+def _xray_inbounds():
+    return [dict(r) for r in db.list_inbounds()]
+
+
+def _xray_clients(inbounds):
+    out = {}
+    for ib in inbounds:
+        try:
+            out[ib["id"]] = [dict(c) for c in db.clients_for_inbound(ib["id"])]
+        except Exception:  # noqa: BLE001
+            out[ib["id"]] = []
+    return out
+
+
+def _xray_fingerprint():
+    """Cheap digest of everything that changes the Xray config."""
+    try:
+        inbounds = _xray_inbounds()
+    except Exception:  # noqa: BLE001
+        return ""
+    parts = []
+    keys = ("id", "uuid", "protocol", "network", "path", "port", "enabled", "security",
+            "host_header", "sni", "ss_method", "ss_password", "grpc_service_name")
+    for ib in inbounds:
+        parts.append("|".join(str(ib.get(k) or "") for k in keys))
+        for c in _xray_clients([ib]).get(ib["id"], []):
+            parts.append("   " + "|".join(str(c.get(k) or "") for k in ("uuid", "enabled", "expires_at")))
+    return hashlib.sha256("\n".join(parts).encode()).hexdigest()
+
+
+def _xray_restart():
+    """Rebuild + relaunch the core. Safe when the binary is missing."""
+    try:
+        inbounds = _xray_inbounds()
+        return xray_core.start(inbounds, _xray_clients(inbounds))
+    except Exception as exc:  # noqa: BLE001
+        print(f"[dollax] xray restart failed: {exc}", flush=True)
+        return {"ok": False, "running": False, "reason": f"{exc.__class__.__name__}: {exc}"}
+
+
+async def _xray_watch():
+    """Config watcher: relaunch the core whenever inbounds/clients change."""
+    last = ""
+    while True:
+        try:
+            if xray_core.enabled():
+                fp = _xray_fingerprint()
+                if fp and fp != last:
+                    last = fp
+                    res = _xray_restart()
+                    if res.get("ok"):
+                        print(f"[dollax] xray-core started: {res.get('port_map') and len(res['port_map'])} "
+                              f"inbound(s), base port {xray_core.base_port()}", flush=True)
+                    elif res.get("reason"):
+                        print(f"[dollax] xray-core not running: {res['reason']}", flush=True)
+        except Exception:  # noqa: BLE001
+            pass
+        await asyncio.sleep(12)
+
+
 # ---------------------------------------------------------------- relay (WebSocket)
 @app.websocket("/{full_path:path}")
 async def ws_entry(ws: WebSocket, full_path: str):
@@ -1194,7 +1521,39 @@ async def ws_entry(ws: WebSocket, full_path: str):
         return
     inbound = dict(ib)
     if protocol.clean_protocol(inbound.get("protocol")) not in protocol.NATIVE_PROTOCOLS:
-        await ws.close(code=1003)
+        # Not a WebSocket protocol the built-in relay speaks (VMess/SS/xhttp/gRPC/...):
+        # hand the connection to the bundled Xray-core, still counting bytes here.
+        xport = xray_core.local_port(inbound["id"])
+        if not (xport and xray_core.is_running()):
+            await ws.close(code=1003)
+            return
+        if db.is_expired(inbound.get("expires_at")):
+            await ws.close(code=1008)
+            return
+        if inbound.get("limit_bytes") and int(inbound.get("used_bytes") or 0) >= int(inbound["limit_bytes"]):
+            await ws.close(code=1008)
+            return
+        await ws.accept()
+        reported = {"up": 0, "down": 0}
+
+        def on_bridge_bytes(up_total, down_total, final=False):
+            up_delta = int(up_total) - reported["up"]
+            down_delta = int(down_total) - reported["down"]
+            if up_delta <= 0 and down_delta <= 0:
+                return
+            reported["up"] = int(up_total)
+            reported["down"] = int(down_total)
+            db.add_inbound_usage(inbound["id"], up_delta, down_delta)
+
+        try:
+            await relay.bridge(ws, f"ws://127.0.0.1:{xport}{path}", on_bytes=on_bridge_bytes)
+        except Exception:  # noqa: BLE001
+            pass
+        finally:
+            try:
+                await ws.close(code=1000)
+            except Exception:  # noqa: BLE001
+                pass
         return
     if db.is_expired(inbound.get("expires_at")):
         await ws.close(code=1008)
@@ -1242,6 +1601,13 @@ async def ws_entry(ws: WebSocket, full_path: str):
         await ws.close(code=1008)
         return
 
+    peer = client_ip_ws(ws)
+    admitted, why = _admit(client, peer)
+    if not admitted:
+        db.log(client.get("name") or "client", "reject", why, ip=peer)
+        await ws.close(code=1008)
+        return
+
     async def replay():
         """Give relay.handle() the frame we already consumed, once."""
         if not replayed["v"]:
@@ -1274,10 +1640,11 @@ async def ws_entry(ws: WebSocket, full_path: str):
             pass
     finally:
         ws.receive = original_receive  # type: ignore[assignment]
+        _release(client)
 
 
 # ---------------------------------------------------------------- entry point
-# `python main.py` must work (Railway / Nixpacks / manual runs) — not only
+# `python main.py` must work (Railway / Nixpacks / manual runs) - not only
 # `uvicorn main:app`. Reads $PORT like every PaaS expects.
 if __name__ == "__main__":
     import traceback
@@ -1301,5 +1668,5 @@ if __name__ == "__main__":
         )
     except Exception:  # noqa: BLE001 - make the real reason visible in the platform log
         traceback.print_exc()
-        print("[dollax] FATAL: the server could not start — see the traceback above.", flush=True)
+        print("[dollax] FATAL: the server could not start - see the traceback above.", flush=True)
         raise
