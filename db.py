@@ -291,6 +291,8 @@ MIGRATIONS = [
     ("inbounds", "reality_spider_x", "TEXT NOT NULL DEFAULT '/'"),
     ("inbounds", "ss_method", "TEXT NOT NULL DEFAULT 'chacha20-ietf-poly1305'"),
     ("inbounds", "ss_password", "TEXT NOT NULL DEFAULT ''"),
+    ("inbounds", "reality_private_key", "TEXT NOT NULL DEFAULT ''"),
+    ("inbounds", "reality_dest", "TEXT NOT NULL DEFAULT ''"),
     ("inbounds", "wg_public_key", "TEXT NOT NULL DEFAULT ''"),
     ("inbounds", "wg_address", "TEXT NOT NULL DEFAULT ''"),
     ("clients", "created_by", "TEXT NOT NULL DEFAULT ''"),
@@ -690,8 +692,8 @@ def clean_ip_list(items, limit=200):
 INBOUND_FIELDS = [
     "name", "protocol", "network", "security", "address", "port", "path", "host_header", "sni", "alpn",
     "fingerprint", "flow", "grpc_service_name", "grpc_mode", "xhttp_mode", "header_type", "allow_insecure",
-    "reality_public_key", "reality_short_id", "reality_spider_x", "ss_method", "ss_password", "fragment",
-    "wg_public_key", "wg_address",
+    "reality_public_key", "reality_short_id", "reality_spider_x", "reality_private_key", "reality_dest",
+    "ss_method", "ss_password", "fragment", "wg_public_key", "wg_address",
     "limit_bytes", "expires_at", "ip_limit", "connection_limit", "client_limit", "config_count",
     "clean_ips", "note", "enabled",
 ]
