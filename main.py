@@ -34,6 +34,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Red
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
+import api_extras
 import db
 import protocol
 import relay
@@ -355,13 +356,13 @@ def inbound_dict(row) -> dict:
 
 
 def _client_inbound_refs(cl: dict) -> list:
-    """The client's inbounds: its primary one plus up to two more (max 3 total)."""
+    """The client's inbounds: its primary one plus up to four more (max 5 total)."""
     refs = [str(cl.get("inbound_id") or "")]
     for extra in db.json_raw(cl.get("extra_inbounds"), []):
         extra = str(extra or "")
         if extra and extra not in refs:
             refs.append(extra)
-    return refs[:3]
+    return refs[:5]
 
 
 def _client_entries(cl: dict, request: Request):
@@ -427,6 +428,9 @@ def client_dict(row, request: Request, inbound=None) -> dict:
     d["created_by"] = d.get("created_by") or ""
     d["extra_inbounds"] = [str(x) for x in db.json_raw(d.get("extra_inbounds"), [])]
     d["config_count"] = max(1, min(10, int(d.get("config_count") or 2)))
+    d["linked"] = [{"id": c["id"], "name": c["name"], "sub_token": c["sub_token"],
+                    "config_count": int(c.get("config_count") or 2)}
+                   for c in db.linked_clients(d["id"])]
     d["days_left"] = db.days_left(d.get("expires_at"))
     d["expired"] = db.is_expired(d.get("expires_at"))
     d["over_quota"] = bool(d.get("limit_bytes")) and d["used_bytes"] >= int(d["limit_bytes"])
@@ -851,6 +855,8 @@ def _inbound_payload(d: dict, existing=None):
         "reality_dest": str(d.get("reality_dest",
             existing["reality_dest"] if existing and "reality_dest" in existing.keys() else "") or "")[:160],
         "fragment": str(d.get("fragment", existing["fragment"] if existing else "") or "")[:120],
+        # the inbound may pick addresses from the Hosts pool: same rotation mechanism
+        "clean_ips": db.json_list(d.get("hosts", d.get("clean_ips", existing["clean_ips"] if existing else []))),
         "note": str(d.get("note", existing["note"] if existing else "") or "")[:500],
     }
     if "limit_bytes" in d:
@@ -1094,7 +1100,7 @@ async def api_create_client(request: Request):
         if not ref or ref == iid or ref in extras:
             continue
         extras.append(ref)
-        if len(extras) >= 2:            # primary + 2 = at most 3 locations per client
+        if len(extras) >= 4:            # primary + 4 = at most 5 locations per client
             break
     cid = db.create_client(
         iid, name,
@@ -1131,7 +1137,7 @@ async def api_update_client(request: Request, cid: str):
             if not ref or ref == row["inbound_id"] or ref in extras:
                 continue
             extras.append(ref)
-            if len(extras) >= 2:
+            if len(extras) >= 4:
                 break
         fields["extra_inbounds"] = extras
     if "config_count" in d:
@@ -1540,6 +1546,10 @@ async def api_node_export(request: Request, token: str = ""):
     return _node_export_payload(request)
 
 
+# Hosts + client sub-links live in api_extras (keeps this file portable).
+api_extras.register(app, sys.modules[__name__])
+
+
 @app.get("/api/node/token")
 async def api_node_token(request: Request):
     if not authed(request):
@@ -1648,7 +1658,7 @@ def _inbound_as_client(inbound_row) -> dict:
 
 
 def _client_sub_entries(cl: dict):
-    """Every location a client owns: its primary inbound + up to two more (max 3)."""
+    """Every location a client owns: its primary inbound + up to four more (max 5)."""
     cl = dict(cl)
     out = []
     for ref in _client_inbound_refs(cl):
@@ -1670,6 +1680,16 @@ def _client_sub_entries(cl: dict):
         ib = dict(row)
         ib["clean_ips"] = db.json_list(ib.get("clean_ips"))
         out.append((ib, dict(cl)))
+    # sub-links: another client's configs ride along in this client's subscription
+    for other in db.linked_clients(cl.get("id") or ""):
+        if str(other.get("id")) == str(cl.get("id")):
+            continue
+        for ib2, sub in _client_sub_entries(other):
+            if len(out) >= 25:
+                break
+            sub = dict(sub)
+            sub["_linked_from"] = other.get("name") or "linked"   # shown in the config name
+            out.append((ib2, sub))
     return out
 
 
@@ -1697,6 +1717,8 @@ def _sub_lines(entries, host):
             continue        # .conf text cannot live in a URI subscription
         loc = ib.get("_location_label") or ""
         remark = client_remark(cl) + (f" \u00b7 {loc}" if loc else "")
+        if cl.get("_linked_from"):
+            remark = str(cl["_linked_from"]) + " -> " + str(cl.get("name") or "") + " \u00b7 " + remark
         lines += protocol.link_list(ib, cl["uuid"], host, cl.get("clean_ips") or ib.get("clean_ips"),
                                     remark=remark, count=int(cl.get("config_count") or 2))
     return lines
