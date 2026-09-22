@@ -1,6 +1,14 @@
 /* Dollax panel - part 2: the secondary pages (clients, logs, admins, settings).
    app.js alone is a fully working panel (overview/inbounds/nodes + boot); this file
    only adds the sections below. */
+/* The absolute subscription URL of an inbound (works for node/remote inbounds too). */
+function inboundSubUrl(ib) {
+  if (ib && ib.sub_url) return ib.sub_url;
+  const tok = (ib && ib.sub_token) || '';
+  if (!tok) return '';
+  return location.origin + '/sub/' + tok;
+}
+
 function pageClients(view) {
   const ib = S.inbounds.find((i) => i.id === S.clientsIb) || S.inbounds[0];
   if (ib && !S.clientsIb) S.clientsIb = ib.id;
@@ -48,8 +56,10 @@ function pageClients(view) {
   if ($('cAdd')) $('cAdd').onclick = () => openClientDrawer(ib);
   if ($('clLedger')) $('clLedger').onclick = () => window.open('/api/ledger.csv', '_blank');
   if ($('cInboundCfg')) $('cInboundCfg').onclick = () => showInboundConfig(ib);
-  if ($('cInboundSub')) $('cInboundSub').onclick = () => copyText(ib.sub_url);
+  // the inbound list has no absolute sub_url, so build it from the token
+  if ($('cInboundSub')) $('cInboundSub').onclick = () => copyText(inboundSubUrl(ib));
   if ($('cInboundPage')) $('cInboundPage').onclick = () => window.open(`/info/${ib.sub_token}`, '_blank');
+  if ($('cSubPreview')) $('cSubPreview').onclick = () => window.open(inboundSubUrl(ib), '_blank');
   $$('[data-cact]', view).forEach((b) => (b.onclick = () => clientAction(b.dataset.cact, b.dataset.id)));
 }
 
@@ -145,7 +155,7 @@ function showClientLinks(c) {
   openModal(c.name, `
     <div class="summary-strip">${esc(c.inbound_name)} · ${esc(c.used_human)}${c.limit_bytes ? ' / ' + esc(c.limit_human) : ' / ∞'} · ${esc(shortDate(c.expires_at))}</div>
     <div class="toolbar" style="margin:12px 0">
-      <button class="btn sm" data-copy="${esc(c.sub_url)}">${T('copySub')}</button>
+      <button class="btn sm" data-copy="${esc(c.sub_url || (location.origin + '/sub/' + (c.sub_token || '')))}">${T('copySub')}</button>
       <button class="btn sm" id="clRegen">${T('newSecret')}</button>
       <button class="btn sm" id="clReset">Reset</button>
     </div>
