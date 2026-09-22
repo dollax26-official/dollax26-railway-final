@@ -147,7 +147,7 @@ const I18N = {
     bgBlur: 'محو', uploadBg: 'آپلود تصویر', removeBg: 'حذف پس‌زمینه‌ی من',
     bgPerUser: 'پس‌زمینه‌ی شما فقط در حساب خودتان دیده می‌شود.',
     bgEnabled: 'استفاده از پس‌زمینه', saveAppearance: 'ذخیره‌ی ظاهر', resetAppearance: 'بازنشانی',
-    fontFamily: 'فونت', bgUploaded: 'پس‌زمینه ذخیره شد', bgRemoved: 'پس‌زمینه حذف شد', usePanelDomain: 'دامنه‌ی پنل', exportLedger: 'خروجی لجند (CSV)', lastGenerated: 'آخرین زمان ساخت کانفیگ', fetches: 'دریافت سابسکریپشن', xrayCore: 'هستهٔ Xray', addMusic: 'افزودن موسیقی', musicPerUser: 'در حساب شما ذخیره می‌شود؛ دفعه بعد آپلود لازم نیست.', defaultMusic: 'آهنگ پیش‌فرض پنل', noMusic: 'هنوز آهنگی نیست', useMusic: 'استفاده از این آهنگ', musicAdded: 'موسیقی ذخیره شد', musicRemoved: 'آهنگ حذف شد', readFailed: 'خواندن فایل ممکن نشد', unsavedChanges: 'تغییرات ذخیره‌نشده', restartCore: 'راه‌اندازی مجدد هسته', refresh: 'بازخوانی', failed: 'ناموفق', xrayCore: 'هستهٔ Xray', xrayNote: 'هستهٔ Xray داخل ایمیج داکر است و با تغییر اینباندها خودکار ریستارت می‌شود.', wgPublicKey: 'کلید عمومی سرور WG', wgAddress: 'آدرس peer در WG', wgNote: 'کانفیگ‌های WireGuard برای سرور WG شما ساخته می‌شوند؛ Railway فقط TCP می‌دهد.', udpNote: 'پروتکل QUIC/UDP: کانفیگ‌ها ساخته می‌شوند اما Railway فقط TCP را باز می‌کند.', proxyNote: 'لینک‌های پروکسی SOCKS5/HTTP برای هر کلاینت ساخته می‌شوند.',
+    fontFamily: 'فونت', bgUploaded: 'پس‌زمینه ذخیره شد', bgRemoved: 'پس‌زمینه حذف شد', usePanelDomain: 'دامنه‌ی پنل', exportLedger: 'خروجی لجند (CSV)', lastGenerated: 'آخرین زمان ساخت کانفیگ', fetches: 'دریافت سابسکریپشن', xrayCore: 'هستهٔ Xray', addMusic: 'افزودن موسیقی', musicPerUser: 'در حساب شما ذخیره می‌شود؛ دفعه بعد آپلود لازم نیست.', defaultMusic: 'آهنگ پیش‌فرض پنل', noMusic: 'هنوز آهنگی نیست', useMusic: 'استفاده از این آهنگ', musicAdded: 'موسیقی ذخیره شد', musicRemoved: 'آهنگ حذف شد', readFailed: 'خواندن فایل ممکن نشد', unsavedChanges: 'تغییرات ذخیره‌نشده', restartCore: 'راه‌اندازی مجدد هسته', refresh: 'بازخوانی', failed: 'ناموفق', xrayCore: 'هستهٔ Xray', xrayNote: 'هستهٔ Xray داخل ایمیج داکر است و با تغییر اینباندها خودکار ریستارت می‌شود.', wgPublicKey: 'کلید عمومی سرور WG', wgAddress: 'آدرس peer در WG', wgNote: 'کانفیگ‌های WireGuard برای سرور WG شما ساخته می‌شوند؛ Railway فقط TCP می‌دهد.', udpNote: 'پروتکل QUIC/UDP: کانفیگ‌ها ساخته می‌شوند اما Railway فقط TCP را باز می‌کند.', proxyNote: 'لینک‌های پروکسی SOCKS5/HTTP برای هر کلاینت ساخته می‌شوند.', realityNote: 'پروتکل Reality به یک پورت TCP خام نیاز دارد (از پورت HTTPS عبور نمی‌کند). در Railway یک TCP Proxy به پورتی که در تنظیمات → هستهٔ Xray نشان داده می‌شود (پیش‌فرض 8443) بسازید و همان دامنه و پورت را در Address/Port وارد کنید. کلید و short id خودکار ساخته می‌شوند.', realityPorts: 'پورت‌های TCP رلیتی',
     appearanceSaved: 'ظاهر ذخیره شد', appearanceReset: 'ظاهر به حالت پیش‌فرض برگشت',
     uploading: 'در حال آپلود…',
     created: 'ساخته شد', updated: 'به‌روز شد', deleted: 'حذف شد', saved: 'ذخیره شد',
@@ -448,6 +448,7 @@ async function loadXrayInto() {
     const st = await api('GET', '/api/xray/status');
     const rows = [['mode', st.mode], ['binary', st.installed ? 'found' : 'missing'],
                   ['running', st.running ? 'yes' : 'no'], ['inbounds', st.inbounds],
+                  [T('realityPorts'), Object.values(st.reality || {}).join(', ') || '—'],
                   ['base port', st.base_port], ['last sync', st.last_sync ? new Date(st.last_sync * 1000).toLocaleTimeString() : '-'],
                   ['version', st.version || '-'], ['error', st.last_error || '-']];
     box.innerHTML = rows.map(([k, v]) => `<div class="diag-row"><span class="muted">${esc(k)}</span>` +
@@ -1033,11 +1034,13 @@ function syncBuilder() {
   if (w) {
     const external = (proto === 'wireguard' || proto === 'hysteria2' || proto === 'tuic');
     const fallback = (proto === 'socks' || proto === 'http');
-    if (proto === 'wireguard') w.textContent = T('wgNote');
+    if (sec === 'reality') w.textContent = T('realityNote');
+    else if (proto === 'wireguard') w.textContent = T('wgNote');
     else if (external) w.textContent = T('udpNote');
     else if (fallback) w.textContent = T('proxyNote');
     else w.textContent = (proto === 'vless' || proto === 'trojan') ? T('vlessNote') : T('bridgeNote');
     w.style.color = external ? 'var(--warning)' : 'var(--muted)';
+    if (sec === 'reality') w.style.color = 'var(--muted)';
   }
   builderSummary();
 }
