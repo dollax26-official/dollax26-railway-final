@@ -835,6 +835,11 @@ async def api_diagnostics(request: Request):
                 else:
                     add("ok", "Reality endpoint set on the inbound",
                         f"{ib['name']} -> {addr}:{ib.get('port')}")
+            elif str(ib.get("flow") or "") and str(ib.get("network") or "ws").lower() != "tcp":
+                add("warn", "Flow is set on a non-TCP transport",
+                    f"{ib['name']}: flow=xtls-rprx-vision only works with TCP/Reality "
+                    f"(this inbound uses {ib.get('network')}); clear the flow or switch to TCP.",
+                    "Inbounds -> Edit -> Flow")
             elif int(ib.get("port") or 0) not in (default_port, 443):
                 add("warn", "Inbound port is not reachable through the panel domain",
                     f"{ib['name']} uses port {ib.get('port')} while clients reach the panel on "
@@ -1577,7 +1582,10 @@ def _sub_lines(entries, host):
         if protocol.clean_protocol(ib.get("protocol")) == "wireguard":
             continue        # .conf text cannot live in a URI subscription
         loc = ib.get("_location_label") or ""
-        remark = client_remark(cl) + (f" \u00b7 {loc}" if loc else "")
+        # the inbound's own credential is not a client: keep its name plain
+        remark = "" if cl.get("is_inbound") else client_remark(cl)
+        if loc and not cl.get("is_inbound"):
+            remark = (remark + f" \u00b7 {loc}") if remark else loc
         if cl.get("_linked_from"):
             remark = str(cl["_linked_from"]) + " -> " + str(cl.get("name") or "") + " \u00b7 " + remark
         lines += protocol.link_list(ib, cl["uuid"], host, cl.get("clean_ips") or ib.get("clean_ips"),
