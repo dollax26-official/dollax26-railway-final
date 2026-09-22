@@ -300,6 +300,12 @@ def client_remark(cl: dict) -> str:
     used = int(cl.get("used_bytes") or 0)
     left = protocol.fmt_bytes(max(0, limit - used)) if limit else "\u221e"
     parts = [f"\U0001F464 {str(cl.get('name') or 'client')[:32]}", f"\U0001F4E6 {left} left"]
+    # how much has been used: percentage and the raw numbers
+    if limit:
+        pct = max(0, min(999, round(used / limit * 100)))
+        parts.append(f"\U0001F4CA {pct}% used ({protocol.fmt_bytes(used)} / {protocol.fmt_bytes(limit)})")
+    else:
+        parts.append(f"\U0001F4CA {protocol.fmt_bytes(used)} used")
     if cl.get("expires_at"):
         d = db.days_left(cl.get("expires_at"))
         if d is None:
