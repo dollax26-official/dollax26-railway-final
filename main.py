@@ -987,7 +987,7 @@ def _inbound_payload(d: dict, existing=None):
             fields["reality_short_id"] = protocol.new_short_id()
         if not str(fields.get("sni") or ""):
             fields["sni"] = "www.microsoft.com"
-        if (str(fields.get("network") or "ws").lower() == "tcp") and not str(fields.get("flow") or ""):
+        if (str(fields.get("network") or "ws").lower() in ("tcp", "raw")) and not str(fields.get("flow") or ""):
             fields["flow"] = "xtls-rprx-vision"
         if not str(fields.get("reality_dest") or ""):
             fields["reality_dest"] = str(fields["sni"]) + ":443"
