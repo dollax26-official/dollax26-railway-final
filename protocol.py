@@ -298,14 +298,14 @@ def decorate_inbound(ib: dict, fallback_host: str = "") -> dict:
     return e
 
 
-def link_list(inbound: dict, client_uuid: str, default_host: str, clean_ips=None, remark=""):
+def link_list(inbound: dict, client_uuid: str, default_host: str, clean_ips=None, remark="", count=None):
     """The N configs of one inbound: rotate over clean IPs when present.
 
     `remark` is appended to every config's name — used by subscriptions so the client app
     shows the remaining traffic / days (Vodiwalker does the same).
     """
     inbound = decorate_inbound(inbound, default_host)
-    count = max(1, min(40, int(inbound.get("config_count") or 1)))
+    count = max(1, min(40, int(count or inbound.get("config_count") or 1)))
     ips = _listify(clean_ips) or _listify(inbound.get("clean_ips"))
     names = config_names(inbound, count)
     if remark:
