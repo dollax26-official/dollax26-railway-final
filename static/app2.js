@@ -45,7 +45,8 @@ function pageClients(view) {
           <td class="muted">${esc(shortDate(c.expires_at))}</td>
           <td><div style="display:flex;gap:5px;flex-wrap:wrap">
             <button class="btn sm" data-cact="ping" data-id="${esc(c.id)}">${T('ping')}</button>
-            <button class="btn sm" data-cact="links" data-id="${esc(c.id)}">${T('config')}</button>
+            <button class="btn sm" data-cact="edit" data-id="${esc(c.id)}">${T('edit')}</button>
+        <button class="btn sm" data-cact="links" data-id="${esc(c.id)}">${T('config')}</button>
             <button class="btn sm" data-cact="toggle" data-id="${esc(c.id)}">${c.enabled ? T('disable') : T('enable')}</button>
             <button class="btn sm danger" data-cact="delete" data-id="${esc(c.id)}">${T('del')}</button>
           </div></td></tr>`).join('')}</tbody></table>`
@@ -68,6 +69,7 @@ async function clientAction(act, id) {
   if (!c) return;
   if (act === 'ping') return pingClient(id);
   if (act === 'links') return showClientLinks(c);
+  if (act === 'edit') return openEditClient(c);
   if (act === 'toggle') { await api('PATCH', `/api/clients/${id}`, { enabled: !c.enabled }); return loadAll(); }
   if (act === 'delete') {
     if (!(await confirmAsync(`${T('del')} “${c.name}”?`, T('confirmTitle')))) return;
@@ -77,6 +79,112 @@ async function clientAction(act, id) {
   }
 }
 
+/* ------------------------------------------------------------------ edit client */
+async function openEditClient(c) {
+  let linked = [];
+  try { linked = (await api('GET', `/api/clients/${c.id}/links`)).items || []; } catch (e) { linked = []; }
+  const others = (S.clients || []).filter((x) => x.id !== c.id);
+  const exp = String(c.expires_at || '').slice(0, 16);
+  const extra = c.extra_inbounds || [];
+  const pick = (list, selected, kind) => list.map((x) => {
+    const val = kind === 'remote' ? x.ref : x.id;
+    const on = selected.includes(val) ? 'checked' : '';
+    const name = kind === 'remote'
+      ? `${esc(x.flag || '')} ${esc(x.node_name || 'node')} · ${esc(x.name || '')}`
+      : esc(x.name);
+    return `<label class="chk pick"><input type="checkbox" value="${esc(val)}" ${on}> <span>${name}</span></label>`;
+  }).join('');
+
+  openModal(`${T('editClient')} — ${esc(c.name)}`, `
+    <div class="form-grid">
+      <label class="field"><span>${T('clientName')}</span><input id="eName" value="${esc(c.name)}"></label>
+      <label class="field"><span>${T('limitGb')}</span>
+        <input id="eLimit" type="number" min="0" value="${c.limit_bytes ? (c.limit_bytes / 1073741824).toFixed(2) : ''}"></label>
+      <label class="field"><span>${T('expiresAt')}</span><input id="eExp" type="datetime-local" value="${esc(exp)}"></label>
+      <label class="field"><span>${T('days')}</span><input id="eDays" type="number" min="0" placeholder="+ days"></label>
+      <label class="field"><span>${T('ipLimit')}</span><input id="eIp" type="number" min="0" value="${esc(c.ip_limit || 0)}"></label>
+      <label class="field"><span>${T('connLimit')}</span><input id="eConn" type="number" min="0" value="${esc(c.connection_limit || 0)}"></label>
+      <label class="field"><span>${T('speed')}</span><input id="eSpeed" type="number" min="0" value="${esc(c.speed_limit_mbps || 0)}"></label>
+      <label class="field"><span>${T('configsPerClient')}</span><input id="eCount" type="number" min="1" max="10" value="${esc(c.config_count || 2)}"></label>
+      <label class="field span-2"><span>${T('note')}</span><input id="eNote" value="${esc(c.note || '')}"></label>
+    </div>
+
+    <div class="card" style="margin-top:14px">
+      <div class="card-head"><h2 style="font-size:13px">${T('inbound')}</h2></div>
+      <label class="field"><span>${T('primaryLocation')}</span>
+        <select id="ePrimary">${(S.inbounds || []).map((x) => `<option value="${esc(x.id)}" ${x.id === c.inbound_id ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select></label>
+      <label class="field" style="margin-top:10px"><span>${T('extraLocations')} <span class="muted">(${T('upToFive')})</span></span>
+        <div class="pick-list" id="eExtra">
+          ${pick((S.inbounds || []).filter((x) => x.id !== c.inbound_id), extra, 'local')}
+          ${pick(S.remoteInbounds || [], extra, 'remote')}
+        </div></label>
+    </div>
+
+    <div class="card" style="margin-top:14px">
+      <div class="card-head"><h2 style="font-size:13px">${T('subLinks')}</h2></div>
+      <p class="muted" style="font-size:10.5px">${T('subLinksNote')}</p>
+      <div class="pick-list" id="eSubLinks" style="margin-top:9px">
+        ${linked.length ? linked.map((l) => `<div class="trk">
+            <span class="trk-name">${esc(l.name)}</span>
+            <span class="muted trk-size">${T('linkedSubs')}</span>
+            <button class="btn sm danger" type="button" data-unlink="${esc(l.id)}">${T('del')}</button></div>`).join('')
+          : `<span class="muted">${T('noSubLinks')}</span>`}
+      </div>
+      <div class="toolbar" style="margin-top:9px">
+        <select id="eLinkPick" style="max-width:240px;flex:1 1 auto">
+          ${others.length ? others.map((x) => `<option value="${esc(x.id)}">${esc(x.name)}</option>`).join('')
+                          : `<option value="">${T('noOtherClients')}</option>`}
+        </select>
+        <button class="btn sm" type="button" id="eLinkAdd">${T('linkThisSub')}</button>
+      </div>
+    </div>
+
+    <div class="modal-foot"><span class="grow"></span>
+      <button class="btn" id="eCancel">${T('cancel')}</button>
+      <button class="btn primary" id="eSave">${T('save')}</button></div>`);
+
+  const refresh = async () => { await loadAll(); await openEditClient(dbRowFor(c.id) || c); };
+  $('eCancel').onclick = closeModal;
+  $$('#eExtra input').forEach((el) => (el.onchange = () => {
+    if ($$('#eExtra input:checked').length > 4) { el.checked = false; toast(T('upToFive'), 'bad'); }
+  }));
+  $$('[data-unlink]').forEach((b) => (b.onclick = async () => {
+    try { await api('DELETE', `/api/clients/${c.id}/links/${b.dataset.unlink}`); toast(T('saved'), 'ok'); refresh(); }
+    catch (e) { toast(e.message, 'bad'); }
+  }));
+  if ($('eLinkAdd')) $('eLinkAdd').onclick = async () => {
+    const pickId = $('eLinkPick').value;
+    if (!pickId) { toast(T('noOtherClients'), 'bad'); return; }
+    try { await api('POST', `/api/clients/${c.id}/links`, { client_id: pickId }); toast(T('linkedSubs'), 'ok'); refresh(); }
+    catch (e) { toast(e.message, 'bad'); }
+  };
+  $('eSave').onclick = async () => {
+    const btn = $('eSave');
+    btn.disabled = true;
+    try {
+      await api('PATCH', `/api/clients/${c.id}`, {
+        name: $('eName').value || c.name,
+        limit_value: $('eLimit').value || 0,
+        expires_at: $('eExp').value || '',
+        expires_days: $('eDays').value || 0,
+        ip_limit: $('eIp').value || 0,
+        connection_limit: $('eConn').value || 0,
+        speed_limit_mbps: $('eSpeed').value || 0,
+        config_count: $('eCount').value || 2,
+        note: $('eNote').value,
+        extra_inbounds: $$('#eExtra input:checked').map((el) => el.value).slice(0, 4),
+      });
+      toast(T('saved'), 'ok');
+      closeModal();
+      await loadAll();
+    } catch (e) { toast(e.message, 'bad'); btn.disabled = false; }
+  };
+}
+
+function dbRowFor(id) {
+  return (S.clients || []).find((x) => x.id === id) || null;
+}
+
 function openClientDrawer(ib) {
   const target = ib || S.inbounds.find((i) => i.id === S.clientsIb) || S.inbounds[0];
   if (!target) { toast(T('pickInboundFirst'), 'bad'); return goto('inbounds'); }
@@ -84,7 +192,7 @@ function openClientDrawer(ib) {
     <div class="form-grid">
       <label class="field span-2"><span>${T('inbound')} — ${T('primaryLocation')}</span>
         <select id="cInboundSel">${S.inbounds.map((x) => `<option value="${esc(x.id)}" ${x.id === target.id ? 'selected' : ''}>${esc(x.name)} · ${esc((x.protocol || '').toUpperCase())}</option>`).join('')}</select></label>
-      <label class="field span-2"><span>${T('extraLocations')} <span class="muted">(${T('upToThree')})</span></span>
+      <label class="field span-2"><span>${T('extraLocations')} <span class="muted">(${T('upToFive')})</span></span>
         <div class="pick-list" id="cExtra">
           ${(S.inbounds || []).filter((x) => x.id !== target.id).map((x) =>
             `<label class="chk pick"><input type="checkbox" value="${esc(x.id)}" data-kind="local">
@@ -98,6 +206,7 @@ function openClientDrawer(ib) {
       <label class="field"><span>${T('clientName')}</span><input id="cName" placeholder="Ali-phone"></label>
       <label class="field"><span>${T('limitGb')}</span><input id="cLimit" type="number" min="0" placeholder="0"></label>
       <label class="field"><span>${T('days')}</span><input id="cDays" type="number" min="0" placeholder="0"></label>
+      <label class="field"><span>${T('expiresAt')}</span><input id="cExp" type="datetime-local"></label>
       <label class="field"><span>${T('ipLimit')}</span><input id="cIp" type="number" min="0" value="0"></label>
       <label class="field"><span>${T('connLimit')}</span><input id="cConn" type="number" min="0" value="0"></label>
       <label class="field"><span>${T('speed')}</span><input id="cSpeed" type="number" min="0" value="0"></label>
@@ -109,7 +218,7 @@ function openClientDrawer(ib) {
   $('cCancel').onclick = closeModal;
   $$('#cExtra input').forEach((el) => (el.onchange = () => {
     const on = $$('#cExtra input:checked');
-    if (on.length > 2) { el.checked = false; toast(T('upToThree'), 'bad'); }
+    if (on.length > 4) { el.checked = false; toast(T('upToFive'), 'bad'); }
   }));
   $('cSave').onclick = async () => {
     try {
@@ -117,6 +226,7 @@ function openClientDrawer(ib) {
       await api('POST', '/api/clients', {
         inbound_id: $('cInboundSel').value, name: $('cName').value || 'Client',
         limit_value: $('cLimit').value || 0, expires_days: $('cDays').value || 0,
+        expires_at: ($('cExp') && $('cExp').value) ? $('cExp').value : '', 
         ip_limit: $('cIp').value || 0, connection_limit: $('cConn').value || 0,
         speed_limit_mbps: $('cSpeed').value || 0, note: $('cNote').value,
         extra_inbounds: extras, config_count: $('cCount') ? $('cCount').value || 2 : 2,
@@ -159,8 +269,13 @@ function showClientLinks(c) {
       <button class="btn sm" id="clRegen">${T('newSecret')}</button>
       <button class="btn sm" id="clReset">Reset</button>
     </div>
+    ${(c.locations || []).length > 1 ? `<div class="card">
+        <div class="f-label" style="margin-bottom:8px">${T('extraLocations')} (${(c.locations || []).length})</div>
+        <div class="kv-line">${(c.locations || []).map((loc) => `<span>${esc(loc.inbound || '')}
+          → <b class="mono">${esc(loc.address || '')}</b>${loc.location ? ' · ' + esc(loc.location) : ''}</span>`).join('')}</div>
+    </div>` : ''}
     <div class="card">
-        <div class="f-label" style="margin-bottom:10px">${(c.links || []).length} config(s)</div>
+        <div class="f-label" style="margin-bottom:10px">${(c.links || []).length} config(s) · ${(c.locations || []).length || 1} ${T('extraLocations').toLowerCase()}</div>
         ${links || '<span class="muted">—</span>'}</div>
     <div class="muted" style="font-size:10.5px;margin-top:12px">
       ${T('lastGenerated')}: ${esc(c.last_config_at ? String(c.last_config_at).slice(0, 19).replace('T', ' ') : '\u2014')}
