@@ -468,7 +468,8 @@ def link_list(inbound: dict, client_uuid: str, default_host: str, clean_ips=None
     ips = _listify(clean_ips) or _listify(inbound.get("clean_ips"))
     names = config_names(inbound, count)
     if remark:
-        names = [f"{n} | {remark}" for n in names]
+        # 🌐 inbound · 👤 client · 📦 traffic left · ⏳ days left
+        names = [f"\U0001F310 {n} | {remark}" for n in names]
     links = []
     for i in range(count):
         if ips:
