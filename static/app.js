@@ -669,10 +669,11 @@ function buildShell() {
 }
 
 function goto(page) {
-  const allowed = ['overview', 'inbounds', 'clients', 'logs', 'settings'];
+  const allowed = ['overview', 'inbounds', 'clients', 'nodes', 'logs', 'settings'];
   if (page === 'admins' && !isOwner()) page = 'overview';
   S.page = allowed.concat(['admins']).includes(page) ? page : 'overview';
-  const titles = { overview: T('nav_overview'), inbounds: T('nav_inbounds'), clients: T('nav_clients'), logs: T('nav_logs'), admins: T('nav_admins'), settings: T('nav_settings') };
+  const titles = { overview: T('nav_overview'), inbounds: T('nav_inbounds'), clients: T('nav_clients'),
+    nodes: T('nav_nodes'), logs: T('nav_logs'), admins: T('nav_admins'), settings: T('nav_settings') };
   $('pageTitle').textContent = titles[S.page];
   $$('#nav button').forEach((b) => b.classList.toggle('on', b.dataset.p === S.page));
   render();
