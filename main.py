@@ -820,6 +820,10 @@ def _inbound_payload(d: dict, existing=None):
         "ss_password": str(d.get("ss_password", existing["ss_password"] if existing else "") or "")[:120],
         "wg_public_key": str(d.get("wg_public_key", existing["wg_public_key"] if existing else "") or "")[:120],
         "wg_address": str(d.get("wg_address", existing["wg_address"] if existing else "") or "")[:120],
+        "reality_private_key": str(d.get("reality_private_key",
+            existing["reality_private_key"] if existing and "reality_private_key" in existing.keys() else "") or "")[:120],
+        "reality_dest": str(d.get("reality_dest",
+            existing["reality_dest"] if existing and "reality_dest" in existing.keys() else "") or "")[:160],
         "fragment": str(d.get("fragment", existing["fragment"] if existing else "") or "")[:120],
         "note": str(d.get("note", existing["note"] if existing else "") or "")[:500],
     }
@@ -856,6 +860,27 @@ def _inbound_payload(d: dict, existing=None):
             fields["host_header"] = fields["address"]
         if not fields["sni"] and fields["security"] != "none":
             fields["sni"] = fields["address"]
+    # ---- Reality: make sure the inbound always has a usable keypair + short id.
+    # Xray keeps `privateKey`; every client link carries the matching `pbk` (public key).
+    if str(fields.get("security") or "").lower() == "reality":
+        priv = str(fields.get("reality_private_key") or "")
+        if not priv:
+            priv, pub = protocol.new_reality_keys()
+            fields["reality_private_key"] = priv
+            fields["reality_public_key"] = pub
+        else:
+            fields["reality_public_key"] = protocol.public_from_private(priv) or fields.get("reality_public_key") or ""
+        if not str(fields.get("reality_short_id") or ""):
+            fields["reality_short_id"] = protocol.new_short_id()
+        if not str(fields.get("sni") or ""):
+            fields["sni"] = "www.microsoft.com"
+        if (str(fields.get("network") or "ws").lower() == "tcp") and not str(fields.get("flow") or ""):
+            fields["flow"] = "xtls-rprx-vision"
+        if not str(fields.get("reality_dest") or ""):
+            fields["reality_dest"] = str(fields["sni"]) + ":443"
+        if not str(fields.get("reality_spider_x") or ""):
+            fields["reality_spider_x"] = "/"
+
     return fields, ""
 
 
