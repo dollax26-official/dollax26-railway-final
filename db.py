@@ -166,6 +166,8 @@ CREATE TABLE IF NOT EXISTS inbounds(
   reality_spider_x TEXT NOT NULL DEFAULT '/',
   ss_method TEXT NOT NULL DEFAULT 'chacha20-ietf-poly1305',
   ss_password TEXT NOT NULL DEFAULT '',
+  wg_public_key TEXT NOT NULL DEFAULT '',
+  wg_address TEXT NOT NULL DEFAULT '',
   fragment TEXT NOT NULL DEFAULT '',
   limit_bytes INTEGER NOT NULL DEFAULT 0,
   expires_at TEXT NOT NULL DEFAULT '',
@@ -200,6 +202,8 @@ CREATE TABLE IF NOT EXISTS clients(
   down_bytes INTEGER NOT NULL DEFAULT 0,
   sub_token TEXT NOT NULL DEFAULT '',
   last_seen TEXT NOT NULL DEFAULT '',
+  last_config_at TEXT NOT NULL DEFAULT '',
+  sub_fetches INTEGER NOT NULL DEFAULT 0,
   created TEXT NOT NULL,
   FOREIGN KEY(inbound_id) REFERENCES inbounds(id) ON DELETE CASCADE
 );
@@ -223,6 +227,15 @@ CREATE TABLE IF NOT EXISTS admin_assets(
   bytes BLOB NOT NULL,
   updated TEXT NOT NULL,
   PRIMARY KEY(username, kind)
+);
+CREATE TABLE IF NOT EXISTS tracks(
+  id TEXT PRIMARY KEY,
+  username TEXT NOT NULL,
+  name TEXT NOT NULL DEFAULT '',
+  mime TEXT NOT NULL DEFAULT 'audio/mpeg',
+  bytes BLOB NOT NULL,
+  size INTEGER NOT NULL DEFAULT 0,
+  created TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS activity(
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -261,6 +274,8 @@ MIGRATIONS = [
     ("inbounds", "reality_spider_x", "TEXT NOT NULL DEFAULT '/'"),
     ("inbounds", "ss_method", "TEXT NOT NULL DEFAULT 'chacha20-ietf-poly1305'"),
     ("inbounds", "ss_password", "TEXT NOT NULL DEFAULT ''"),
+    ("inbounds", "wg_public_key", "TEXT NOT NULL DEFAULT ''"),
+    ("inbounds", "wg_address", "TEXT NOT NULL DEFAULT ''"),
     ("inbounds", "fragment", "TEXT NOT NULL DEFAULT ''"),
     ("inbounds", "limit_bytes", "INTEGER NOT NULL DEFAULT 0"),
     ("inbounds", "expires_at", "TEXT NOT NULL DEFAULT ''"),
@@ -282,6 +297,8 @@ MIGRATIONS = [
     ("clients", "used_bytes", "INTEGER NOT NULL DEFAULT 0"),
     ("clients", "sub_token", "TEXT NOT NULL DEFAULT ''"),
     ("clients", "last_seen", "TEXT NOT NULL DEFAULT ''"),
+    ("clients", "last_config_at", "TEXT NOT NULL DEFAULT ''"),
+    ("clients", "sub_fetches", "INTEGER NOT NULL DEFAULT 0"),
 ]
 
 # 12 Cloudflare edge addresses that answered from an Iranian (FRA-routed) line.
@@ -488,6 +505,37 @@ def delete_asset(username, kind) -> bool:
         return cur.rowcount > 0
 
 
+# ---------------------------------------------------------------- music library
+# Each admin keeps their own tracks: upload once, then it stays in their account.
+def list_tracks(username):
+    with conn() as c:
+        rows = c.execute("SELECT id, name, mime, size, created FROM tracks WHERE username=? "
+                         "ORDER BY created DESC", (username,)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def add_track(username, name, mime, data: bytes) -> str:
+    tid = secrets.token_hex(8)
+    with _write_lock, conn() as c:
+        c.execute("INSERT INTO tracks(id,username,name,mime,bytes,size,created) VALUES(?,?,?,?,?,?,?)",
+                  (tid, username, str(name)[:120], str(mime)[:60], sqlite3.Binary(data), len(data), now()))
+        c.commit()
+    return tid
+
+
+def get_track(username, tid):
+    with conn() as c:
+        return c.execute("SELECT id, name, mime, bytes, size FROM tracks WHERE id=? AND username=?",
+                         (tid, username)).fetchone()
+
+
+def delete_track(username, tid) -> bool:
+    with _write_lock, conn() as c:
+        cur = c.execute("DELETE FROM tracks WHERE id=? AND username=?", (tid, username))
+        c.commit()
+        return cur.rowcount > 0
+
+
 # ---------------------------------------------------------------- activity
 def log(username, action, detail="", ip=""):
     try:
@@ -542,6 +590,7 @@ INBOUND_FIELDS = [
     "name", "protocol", "network", "security", "address", "port", "path", "host_header", "sni", "alpn",
     "fingerprint", "flow", "grpc_service_name", "grpc_mode", "xhttp_mode", "header_type", "allow_insecure",
     "reality_public_key", "reality_short_id", "reality_spider_x", "ss_method", "ss_password", "fragment",
+    "wg_public_key", "wg_address",
     "limit_bytes", "expires_at", "ip_limit", "connection_limit", "client_limit", "config_count",
     "clean_ips", "note", "enabled",
 ]
@@ -699,6 +748,45 @@ def add_client_usage(cid, up=0, down=0):
         c.execute("UPDATE clients SET used_bytes=used_bytes+?, up_bytes=up_bytes+?, down_bytes=down_bytes+?, "
                   "last_seen=? WHERE id=?", (up + down, up, down, now(), cid))
         c.commit()
+
+
+def touch_client_config(cid):
+    """Ledger: every time a config/subscription is generated for this client."""
+    if not cid:
+        return
+    try:
+        with _write_lock, conn() as c:
+            c.execute("UPDATE clients SET last_config_at=?, sub_fetches=sub_fetches+1 WHERE id=?",
+                      (now(), cid))
+            c.commit()
+    except Exception:
+        pass
+
+
+def ledger_rows():
+    """Full per-client ledger: quota, consumed, remaining, expiry, last generation."""
+    with conn() as c:
+        rows = c.execute(
+            """SELECT c.id, c.name, c.uuid, c.inbound_id, i.name AS inbound_name, i.protocol, i.network,
+                      i.security, c.enabled, c.limit_bytes, c.used_bytes, c.up_bytes, c.down_bytes,
+                      c.expires_at, c.sub_token, c.last_seen, c.last_config_at, c.sub_fetches, c.created
+               FROM clients c LEFT JOIN inbounds i ON i.id = c.inbound_id
+               ORDER BY c.created DESC""").fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        limit = int(d.get("limit_bytes") or 0)
+        used = int(d.get("used_bytes") or 0)
+        d["remaining_bytes"] = max(0, limit - used) if limit else 0
+        d["remaining_human"] = fmt_bytes(d["remaining_bytes"]) if limit else "unlimited"
+        d["used_human"] = fmt_bytes(used)
+        d["limit_human"] = fmt_bytes(limit) if limit else "unlimited"
+        d["days_left"] = days_left(d.get("expires_at"))
+        d["state"] = ("disabled" if not d.get("enabled") else
+                      "expired" if (d["days_left"] is not None and d["days_left"] < 0) else
+                      "quota" if (limit and used >= limit) else "active")
+        out.append(d)
+    return out
 
 
 # ---------------------------------------------------------------- clean IPs
