@@ -32,7 +32,7 @@ XRAY_PROTOCOLS = ["vless", "vmess", "trojan", "shadowsocks"]
 # UDP / extra-engine protocols (hysteria2, tuic, wireguard) are generated for clients but
 # need a host that exposes raw UDP or a TUN device; Railway's proxy is TCP-only.
 EXTERNAL_PROTOCOLS = ["hysteria2", "tuic", "wireguard", "socks", "http"]
-NETWORKS = ["ws", "xhttp", "grpc", "tcp", "httpupgrade"]
+NETWORKS = ["ws", "xhttp", "grpc", "raw", "tcp", "httpupgrade"]
 SECURITIES = ["tls", "reality", "none"]
 # what the built-in relay can actually terminate
 NATIVE_PROTOCOLS = ["vless", "trojan"]
@@ -259,7 +259,7 @@ def _common_query(inbound, fp, extra=None):
     elif net == "grpc":
         q["serviceName"] = inbound.get("grpc_service_name") or ""
         q["mode"] = inbound.get("grpc_mode") or "gun"
-    elif net == "tcp":
+    elif net in ("tcp", "raw"):
         q["headerType"] = inbound.get("header_type") or "none"
     if inbound.get("flow"):
         q["flow"] = inbound["flow"]
