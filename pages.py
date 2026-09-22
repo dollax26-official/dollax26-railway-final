@@ -51,8 +51,8 @@ def dashboard_html(panel_name="Dollax Panel", version="dev"):
   </div>
 </div>
 <div class="toasts" id="toasts"></div>
-<script src="/static/app.js"></script>
-<script src="/static/app2.js"></script>"""
+<script src="/static/app.js?v={escape(version)}"></script>
+<script src="/static/app2.js?v={escape(version)}"></script>"""
     # the whole shell is rendered by app.js, like the Worker does
     return _doc(panel_name, body)
 
@@ -177,10 +177,19 @@ def _tpl_aurora(data):
 document.addEventListener('click', function (e) {{
   var b = e.target.closest('[data-copy]');
   if (!b) return;
-  navigator.clipboard.writeText(b.getAttribute('data-copy')).then(function () {{
-    var old = b.textContent; b.textContent = '{t("copied")}';
-    setTimeout(function () {{ b.textContent = old; }}, 1200);
-  }});
+  var txt = b.getAttribute('data-copy') || '';
+  var done = function () {{ var old = b.textContent; b.textContent = '{t("copied")}';
+    setTimeout(function () {{ b.textContent = old; }}, 1200); }};
+  var legacy = function () {{
+    var ta = document.createElement('textarea');
+    ta.value = txt; ta.style.position = 'fixed'; ta.style.top = '-1000px';
+    document.body.appendChild(ta); ta.select();
+    try {{ document.execCommand('copy'); }} catch (err) {{}}
+    document.body.removeChild(ta); done();
+  }};
+  if (navigator.clipboard && navigator.clipboard.writeText) {{
+    navigator.clipboard.writeText(txt).then(done, legacy);
+  }} else {{ legacy(); }}
 }});
 </script>"""
     return _doc(f"{data['panel_name']} — {data['title']}", body, lang=lang,
