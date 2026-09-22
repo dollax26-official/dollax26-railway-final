@@ -493,7 +493,17 @@ function pageSettings(view) {
 
       ${owner ? `<div class="card">
         <div class="card-head"><h2>${T('xrayCore')}</h2></div>
-        <div id="xrayBox"><p class="muted"><span class="spin"></span></p></div>
+        <div class="form-grid" style="margin-top:4px">
+          <label class="field"><span>${T('realityHost')}</span>
+            <input id="sRealityHost" value="${esc(S.settings.reality_host || '')}" placeholder="tcp.up.railway.app"></label>
+          <label class="field"><span>${T('realityPort')}</span>
+            <input id="sRealityPort" type="number" min="1" max="65535" value="${esc(S.settings.reality_public_port || '')}" placeholder="12345"></label>
+        </div>
+        <div class="toolbar" style="margin-top:9px">
+          <button class="btn sm primary" id="sRealitySave">${T('save')}</button>
+          <span class="muted" style="font-size:10px">${T('realityHint')}</span>
+        </div>
+        <div id="xrayBox" style="margin-top:12px"><p class="muted"><span class="spin"></span></p></div>
         <div class="toolbar" style="margin-top:11px">
           <button class="btn sm" id="xrayRefresh">${T('refresh')}</button>
           <button class="btn sm" id="xrayRestart">${T('restartCore')}</button>
@@ -541,6 +551,15 @@ function pageSettings(view) {
       });
       toast(T('saved'), 'ok');
       loadAll();
+    } catch (e) { toast(e.message, 'bad'); }
+  };
+  if ($('sRealitySave')) $('sRealitySave').onclick = async () => {
+    try {
+      await api('POST', '/api/settings', { reality_host: $('sRealityHost').value,
+                                           reality_public_port: $('sRealityPort').value });
+      toast(T('saved'), 'ok');
+      await loadAll();
+      goto('settings');
     } catch (e) { toast(e.message, 'bad'); }
   };
   if ($('xrayRefresh')) $('xrayRefresh').onclick = () => loadXrayInto();
