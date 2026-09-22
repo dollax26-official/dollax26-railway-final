@@ -1089,7 +1089,7 @@ function openBuilder(ib) {
   const body = `<div class="builder">
     <div class="form-grid">
       ${opt('bProto', T('protocol'), [['vless', 'VLESS'], ['vmess', 'VMess'], ['trojan', 'Trojan'], ['shadowsocks', 'Shadowsocks'], ['wireguard', 'WireGuard'], ['hysteria2', 'Hysteria2'], ['tuic', 'TUIC'], ['socks', 'SOCKS5'], ['http', 'HTTP']], b.protocol || 'vless')}
-      ${opt('bNet', T('transport'), [['ws', 'WebSocket'], ['xhttp', 'XHTTP'], ['grpc', 'gRPC'], ['httpupgrade', 'HTTPUpgrade'], ['tcp', 'TCP']], b.network || 'ws')}
+      ${opt('bNet', T('transport'), [['ws', 'WebSocket'], ['xhttp', 'XHTTP'], ['grpc', 'gRPC'], ['httpupgrade', 'HTTPUpgrade'], ['raw', 'RAW (TCP, modern)'], ['tcp', 'TCP (legacy)']], b.network || 'ws')}
       ${opt('bSec', T('security'), [['tls', 'TLS'], ['reality', 'Reality'], ['none', 'None']], b.security || 'tls')}
       ${opt('bFp', T('fFp'), FP_CHOICES.map((f) => [f, f]), b.fingerprint || 'chrome')}
     </div>
