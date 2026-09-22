@@ -22,6 +22,7 @@ const I18N = {
     status: 'Status', traffic: 'Traffic', expiry: 'Expiry', actions: 'Actions', clients: 'Clients',
     edit: 'Edit', config: 'Config', del: 'Delete', newSecret: 'New secret', close: 'Close',
     copy: 'Copy', copySub: 'Copy subscription', openSub: 'Open subscription page',
+    nothingToCopy: 'Nothing to copy here yet', copyFailed: 'Copy blocked by the browser - select and copy manually',
     copyClash: 'Copy Clash', copySingbox: 'Copy sing-box', copied: 'Copied',
     inbound: 'Inbound', path: 'Path', expiryNever: 'never', unlimited: '∞',
     active: 'active', disabled: 'disabled', expired: 'expired', quota: 'quota',
@@ -147,7 +148,7 @@ const I18N = {
     bgBlur: 'محو', uploadBg: 'آپلود تصویر', removeBg: 'حذف پس‌زمینه‌ی من',
     bgPerUser: 'پس‌زمینه‌ی شما فقط در حساب خودتان دیده می‌شود.',
     bgEnabled: 'استفاده از پس‌زمینه', saveAppearance: 'ذخیره‌ی ظاهر', resetAppearance: 'بازنشانی',
-    fontFamily: 'فونت', bgUploaded: 'پس‌زمینه ذخیره شد', bgRemoved: 'پس‌زمینه حذف شد', usePanelDomain: 'دامنه‌ی پنل', exportLedger: 'خروجی لجند (CSV)', lastGenerated: 'آخرین زمان ساخت کانفیگ', fetches: 'دریافت سابسکریپشن', xrayCore: 'هستهٔ Xray', addMusic: 'افزودن موسیقی', musicPerUser: 'در حساب شما ذخیره می‌شود؛ دفعه بعد آپلود لازم نیست.', defaultMusic: 'آهنگ پیش‌فرض پنل', noMusic: 'هنوز آهنگی نیست', useMusic: 'استفاده از این آهنگ', musicAdded: 'موسیقی ذخیره شد', musicRemoved: 'آهنگ حذف شد', readFailed: 'خواندن فایل ممکن نشد', unsavedChanges: 'تغییرات ذخیره‌نشده', restartCore: 'راه‌اندازی مجدد هسته', refresh: 'بازخوانی', failed: 'ناموفق', xrayCore: 'هستهٔ Xray', xrayNote: 'هستهٔ Xray داخل ایمیج داکر است و با تغییر اینباندها خودکار ریستارت می‌شود.', wgPublicKey: 'کلید عمومی سرور WG', wgAddress: 'آدرس peer در WG', wgNote: 'کانفیگ‌های WireGuard برای سرور WG شما ساخته می‌شوند؛ Railway فقط TCP می‌دهد.', udpNote: 'پروتکل QUIC/UDP: کانفیگ‌ها ساخته می‌شوند اما Railway فقط TCP را باز می‌کند.', proxyNote: 'لینک‌های پروکسی SOCKS5/HTTP برای هر کلاینت ساخته می‌شوند.', realityNote: 'پروتکل Reality به یک پورت TCP خام نیاز دارد (از پورت HTTPS عبور نمی‌کند). در Railway یک TCP Proxy به پورتی که در تنظیمات → هستهٔ Xray نشان داده می‌شود (پیش‌فرض 8443) بسازید و همان دامنه و پورت را در Address/Port وارد کنید. کلید و short id خودکار ساخته می‌شوند.', realityPorts: 'پورت‌های TCP رلیتی',
+    fontFamily: 'فونت', bgUploaded: 'پس‌زمینه ذخیره شد', bgRemoved: 'پس‌زمینه حذف شد', usePanelDomain: 'دامنه‌ی پنل', exportLedger: 'خروجی لجند (CSV)', lastGenerated: 'آخرین زمان ساخت کانفیگ', fetches: 'دریافت سابسکریپشن', xrayCore: 'هستهٔ Xray', addMusic: 'افزودن موسیقی', musicPerUser: 'در حساب شما ذخیره می‌شود؛ دفعه بعد آپلود لازم نیست.', defaultMusic: 'آهنگ پیش‌فرض پنل', noMusic: 'هنوز آهنگی نیست', useMusic: 'استفاده از این آهنگ', musicAdded: 'موسیقی ذخیره شد', musicRemoved: 'آهنگ حذف شد', readFailed: 'خواندن فایل ممکن نشد', unsavedChanges: 'تغییرات ذخیره‌نشده', restartCore: 'راه‌اندازی مجدد هسته', refresh: 'بازخوانی', failed: 'ناموفق', xrayCore: 'هستهٔ Xray', xrayNote: 'هستهٔ Xray داخل ایمیج داکر است و با تغییر اینباندها خودکار ریستارت می‌شود.', wgPublicKey: 'کلید عمومی سرور WG', wgAddress: 'آدرس peer در WG', wgNote: 'کانفیگ‌های WireGuard برای سرور WG شما ساخته می‌شوند؛ Railway فقط TCP می‌دهد.', udpNote: 'پروتکل QUIC/UDP: کانفیگ‌ها ساخته می‌شوند اما Railway فقط TCP را باز می‌کند.', proxyNote: 'لینک‌های پروکسی SOCKS5/HTTP برای هر کلاینت ساخته می‌شوند.', realityNote: 'پروتکل Reality به یک پورت TCP خام نیاز دارد (از پورت HTTPS عبور نمی‌کند). در Railway یک TCP Proxy به پورتی که در تنظیمات → هستهٔ Xray نشان داده می‌شود (پیش‌فرض 8443) بسازید و همان دامنه و پورت را در Address/Port وارد کنید. کلید و short id خودکار ساخته می‌شوند.', realityPorts: 'پورت‌های TCP رلیتی', nothingToCopy: 'چیزی برای کپی نیست', copyFailed: 'مرورگر اجازهٔ کپی نداد؛ دستی انتخاب و کپی کنید',
     appearanceSaved: 'ظاهر ذخیره شد', appearanceReset: 'ظاهر به حالت پیش‌فرض برگشت',
     uploading: 'در حال آپلود…',
     created: 'ساخته شد', updated: 'به‌روز شد', deleted: 'حذف شد', saved: 'ذخیره شد',
@@ -243,9 +244,49 @@ function openModal(title, bodyHtml, isConfirm) {
 }
 function closeModal() { $('modal').classList.add('hidden'); $('modalBody').innerHTML = ''; }
 
+/* Copy helper used by every button in the panel.
+   Browsers only allow the async Clipboard API in a secure context with the document
+   focused, so fall back to the legacy selection+execCommand path (which also works over
+   plain http / inside webviews) and always report the outcome. */
+function legacyCopy(value) {
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = value;
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed';
+    ta.style.top = '-1000px';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    ta.setSelectionRange(0, value.length);
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch (err) { ok = false; }
+    document.body.removeChild(ta);
+    return ok;
+  } catch (err) {
+    return false;
+  }
+}
+
 async function copyText(text) {
-  try { await navigator.clipboard.writeText(text); toast(T('copied'), 'ok'); }
-  catch (e) { toast('Copy failed', 'bad'); }
+  const value = String(text == null ? '' : text).trim();
+  if (!value || value === 'undefined' || value === 'null') {
+    toast(T('nothingToCopy'), 'bad');
+    return false;
+  }
+  const ok = () => { toast(T('copied'), 'ok'); return true; };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    try {
+      await navigator.clipboard.writeText(value);
+      return ok();
+    } catch (e) {
+      /* fall through to the legacy path (permission denied, no focus, old browser) */
+    }
+  }
+  if (legacyCopy(value)) return ok();
+  toast(T('copyFailed'), 'bad');
+  return false;
 }
 
 /* ------------------------------------------------------------------ music */
