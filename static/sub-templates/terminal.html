@@ -68,15 +68,31 @@ body{margin:0;background:#04070a;color:#7cffb2;font-family:'JetBrains Mono',ui-m
   <p class="tm-foot">$l_footer · $panel</p>
 </div>
 <script>
-document.addEventListener('click', function (e) {
-  var b = e.target.closest('[data-copy]');
-  if (!b) return;
-  var txt = b.getAttribute('data-copy') || '';
-  var done = function () { var o = b.textContent; b.textContent = '$l_copied'; setTimeout(function () { b.textContent = o; }, 1200); };
-  if (navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(txt).then(done, done); }
-  else { var ta = document.createElement('textarea'); ta.value = txt; document.body.appendChild(ta); ta.select();
-         try { document.execCommand('copy'); } catch (err) {} document.body.removeChild(ta); done(); }
-});
+(function () {
+  function fallback(text) {
+    var ta = document.createElement('textarea');
+    ta.value = text; ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed'; ta.style.top = '-1000px';
+    document.body.appendChild(ta); ta.select(); ta.setSelectionRange(0, text.length);
+    var ok = false;
+    try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+    document.body.removeChild(ta);
+    return ok;
+  }
+  document.addEventListener('click', function (e) {
+    var b = e.target.closest('[data-copy]');
+    if (!b) return;
+    e.preventDefault();
+    var txt = b.getAttribute('data-copy') || '';
+    var done = function () {
+      var old = b.textContent; b.textContent = 'Copied!';
+      setTimeout(function () { b.textContent = old; }, 1200);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(txt).then(done, function () { if (fallback(txt)) done(); });
+    } else if (fallback(txt)) { done(); }
+  });
+})();
 </script>
 </body>
 </html>
