@@ -51,7 +51,8 @@ def dashboard_html(panel_name="Dollax Panel", version="dev"):
   </div>
 </div>
 <div class="toasts" id="toasts"></div>
-<script src="/static/app.js"></script>"""
+<script src="/static/app.js"></script>
+<script src="/static/app2.js"></script>"""
     # the whole shell is rendered by app.js, like the Worker does
     return _doc(panel_name, body)
 
