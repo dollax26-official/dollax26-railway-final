@@ -204,6 +204,9 @@ CREATE TABLE IF NOT EXISTS clients(
   last_seen TEXT NOT NULL DEFAULT '',
   last_config_at TEXT NOT NULL DEFAULT '',
   sub_fetches INTEGER NOT NULL DEFAULT 0,
+  created_by TEXT NOT NULL DEFAULT '',
+  extra_inbounds TEXT NOT NULL DEFAULT '[]',
+  config_count INTEGER NOT NULL DEFAULT 2,
   created TEXT NOT NULL,
   FOREIGN KEY(inbound_id) REFERENCES inbounds(id) ON DELETE CASCADE
 );
@@ -235,6 +238,20 @@ CREATE TABLE IF NOT EXISTS tracks(
   mime TEXT NOT NULL DEFAULT 'audio/mpeg',
   bytes BLOB NOT NULL,
   size INTEGER NOT NULL DEFAULT 0,
+  created TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS nodes(
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL DEFAULT '',
+  url TEXT NOT NULL DEFAULT '',
+  token TEXT NOT NULL DEFAULT '',
+  location TEXT NOT NULL DEFAULT '',
+  flag TEXT NOT NULL DEFAULT '',
+  enabled INTEGER NOT NULL DEFAULT 1,
+  status TEXT NOT NULL DEFAULT '',
+  snapshot TEXT NOT NULL DEFAULT '[]',
+  last_seen TEXT NOT NULL DEFAULT '',
+  created_by TEXT NOT NULL DEFAULT '',
   created TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS activity(
@@ -276,6 +293,9 @@ MIGRATIONS = [
     ("inbounds", "ss_password", "TEXT NOT NULL DEFAULT ''"),
     ("inbounds", "wg_public_key", "TEXT NOT NULL DEFAULT ''"),
     ("inbounds", "wg_address", "TEXT NOT NULL DEFAULT ''"),
+    ("clients", "created_by", "TEXT NOT NULL DEFAULT ''"),
+    ("clients", "extra_inbounds", "TEXT NOT NULL DEFAULT '[]'"),
+    ("clients", "config_count", "INTEGER NOT NULL DEFAULT 2"),
     ("inbounds", "fragment", "TEXT NOT NULL DEFAULT ''"),
     ("inbounds", "limit_bytes", "INTEGER NOT NULL DEFAULT 0"),
     ("inbounds", "expires_at", "TEXT NOT NULL DEFAULT ''"),
@@ -536,6 +556,76 @@ def delete_track(username, tid) -> bool:
         return cur.rowcount > 0
 
 
+# ---------------------------------------------------------------- nodes (panel to panel)
+# A node is another Dollax panel in a different location. The connecting panel pulls that
+# panel's inbounds (via /api/node/export with the shared node token) so subs can carry
+# several locations, and its inbounds show up here tagged with the node's location.
+def list_nodes():
+    with conn() as c:
+        rows = c.execute("SELECT * FROM nodes ORDER BY created").fetchall()
+    return [dict(r) for r in rows]
+
+
+def node_row(nid):
+    with conn() as c:
+        return c.execute("SELECT * FROM nodes WHERE id=?", (nid,)).fetchone()
+
+
+def add_node(fields: dict) -> str:
+    nid = fields.get("id") or secrets.token_hex(6)
+    with _write_lock, conn() as c:
+        c.execute("INSERT INTO nodes(id,name,url,token,location,flag,enabled,status,snapshot,last_seen,"
+                  "created_by,created) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                  (nid, str(fields.get("name") or "")[:60], str(fields.get("url") or "")[:300],
+                   str(fields.get("token") or "")[:200], str(fields.get("location") or "")[:60],
+                   str(fields.get("flag") or "")[:8], 1 if fields.get("enabled", True) else 0,
+                   "", "[]", "", str(fields.get("created_by") or ""), now()))
+        c.commit()
+    return nid
+
+
+def update_node(nid, fields: dict) -> bool:
+    allowed = ("name", "url", "token", "location", "flag", "enabled")
+    sets, vals = [], []
+    for k in allowed:
+        if k in fields:
+            v = fields[k]
+            if k == "enabled":
+                v = 1 if v else 0
+            sets.append(f"{k}=?")
+            vals.append(v)
+    if not sets:
+        return False
+    vals.append(nid)
+    with _write_lock, conn() as c:
+        cur = c.execute(f"UPDATE nodes SET {', '.join(sets)} WHERE id=?", vals)
+        c.commit()
+        return cur.rowcount > 0
+
+
+def delete_node(nid) -> bool:
+    with _write_lock, conn() as c:
+        cur = c.execute("DELETE FROM nodes WHERE id=?", (nid,))
+        c.commit()
+        return cur.rowcount > 0
+
+
+def set_node_snapshot(nid, status, items, seen="") -> None:
+    with _write_lock, conn() as c:
+        c.execute("UPDATE nodes SET status=?, snapshot=?, last_seen=? WHERE id=?",
+                  (str(status)[:200], json.dumps(items or []), seen or now(), nid))
+        c.commit()
+
+
+def node_token() -> str:
+    """The token other panels must present to read this panel's inbounds."""
+    tok = setting("node_token")
+    if not tok:
+        tok = secrets.token_urlsafe(24)
+        set_setting("node_token", tok)
+    return tok
+
+
 # ---------------------------------------------------------------- activity
 def log(username, action, detail="", ip=""):
     try:
@@ -553,6 +643,17 @@ def activity(limit=100):
 
 
 # ---------------------------------------------------------------- serialisation helpers
+def json_raw(value, default=None):
+    """Decode arbitrary stored JSON (lists/dicts) without the IP-list clean-up."""
+    if isinstance(value, (list, dict)):
+        return value
+    try:
+        parsed = json.loads(value) if value else default
+        return parsed if parsed is not None else (default if default is not None else [])
+    except Exception:
+        return default if default is not None else []
+
+
 def json_list(value):
     if isinstance(value, list):
         items = value
@@ -662,7 +763,7 @@ def add_inbound_usage(iid, up=0, down=0):
 # ---------------------------------------------------------------- clients
 CLIENT_FIELDS = [
     "name", "limit_bytes", "expires_at", "ip_limit", "connection_limit", "speed_limit_mbps",
-    "clean_ips", "note", "enabled",
+    "clean_ips", "note", "enabled", "created_by", "extra_inbounds", "config_count",
 ]
 
 
@@ -703,6 +804,10 @@ def create_client(iid, name, **kw):
              enc(fields["connection_limit"]), enc(fields["speed_limit_mbps"]), enc(fields["clean_ips"]), enc(fields["note"]),
              enc(fields["enabled"]), 0, protocol.new_token(16), "", now()),
         )
+        # ownership + multi-location + per-client config count
+        c.execute("UPDATE clients SET created_by=?, extra_inbounds=?, config_count=? WHERE id=?",
+                  (str(fields.get("created_by") or ""), enc(fields.get("extra_inbounds") or []),
+                   max(1, min(10, int(fields.get("config_count") or 2))), cid))
         c.commit()
     return cid
 
