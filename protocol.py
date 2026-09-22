@@ -24,8 +24,14 @@ SS_METHODS = [
     "chacha20-ietf-poly1305", "aes-128-gcm", "aes-256-gcm",
     "2022-blake3-aes-128-gcm", "2022-blake3-aes-256-gcm",
 ]
-PROTOCOLS = ["vless", "vmess", "trojan", "shadowsocks"]
-NETWORKS = ["ws", "xhttp", "grpc", "tcp"]
+PROTOCOLS = ["vless", "vmess", "trojan", "shadowsocks", "wireguard", "hysteria2", "tuic", "socks", "http"]
+
+# The panel's bundled Xray-core can serve these over the single TCP port Railway exposes.
+XRAY_PROTOCOLS = ["vless", "vmess", "trojan", "shadowsocks"]
+# UDP / extra-engine protocols (hysteria2, tuic, wireguard) are generated for clients but
+# need a host that exposes raw UDP or a TUN device; Railway's proxy is TCP-only.
+EXTERNAL_PROTOCOLS = ["hysteria2", "tuic", "wireguard", "socks", "http"]
+NETWORKS = ["ws", "xhttp", "grpc", "tcp", "httpupgrade"]
 SECURITIES = ["tls", "reality", "none"]
 # what the built-in relay can actually terminate
 NATIVE_PROTOCOLS = ["vless", "trojan"]
@@ -169,6 +175,62 @@ def ss_link_for(inbound: dict, client_uuid: str, address: str, name: str) -> str
     return f"ss://{userinfo}@{address}:{inbound.get('port') or 443}#{tag}"
 
 
+def hysteria2_link_for(inbound: dict, client_uuid: str, address: str, name: str) -> str:
+    """hysteria2://... (QUIC/UDP - needs a host that exposes raw UDP)."""
+    pw = quote(client_secret(inbound, client_uuid), safe="")
+    sni = inbound.get("sni") or inbound.get("host_header") or address
+    obfs = (inbound.get("ss_password") or "").strip() or url_b64(str(client_uuid))[:22]
+    q = urlencode({"sni": sni, "insecure": "1", "obfs": "salamander", "obfs-password": obfs},
+                  quote_via=quote)
+    return f"hysteria2://{pw}@{address}:{inbound.get('port') or 443}?{q}#{quote(str(name), safe='')}"
+
+
+def tuic_link_for(inbound: dict, client_uuid: str, address: str, name: str) -> str:
+    """tuic://... (QUIC/UDP - needs a host that exposes raw UDP)."""
+    pw = quote(client_secret(inbound, client_uuid), safe="")
+    sni = inbound.get("sni") or inbound.get("host_header") or address
+    q = urlencode({"sni": sni, "alpn": "h3", "congestion_control": inbound.get("tuic_cc") or "bbr",
+                   "udp_relay_mode": "native", "allow_insecure": "1"}, quote_via=quote)
+    return f"tuic://{client_uuid}:{pw}@{address}:{inbound.get('port') or 443}?{q}#{quote(str(name), safe='')}"
+
+
+def socks_link(inbound: dict, client_uuid: str, address: str, name: str = "", scheme: str = "socks") -> str:
+    """socks5:// / http:// with per-client credentials."""
+    user = quote(str(client_uuid)[:16], safe="")
+    pw = quote(client_secret(inbound, client_uuid), safe="")
+    return f"{scheme}://{user}:{pw}@{address}:{inbound.get('port') or 1080}#{quote(str(name), safe='')}"
+
+
+def wireguard_conf(inbound: dict, client_uuid: str, address: str, name: str = "") -> str:
+    """A standard WireGuard peer config for one client.
+
+    WireGuard cannot run inside a Railway container (it needs a TUN device and NET_ADMIN),
+    so the panel generates the peer side for a WireGuard endpoint you run elsewhere: keep
+    the endpoint's *public* key in the inbound's WG public key and the peer address here.
+    The peer's private key is derived from the client UUID, so it stays stable and the
+    matching public key can be registered on your WG server.
+    """
+    import hashlib as _hashlib
+    _raw = _hashlib.sha256((client_uuid or "dollax").encode()).digest()
+    priv = base64.b64encode(_raw).decode()
+    pub = base64.b64encode(_hashlib.sha256(_raw).digest()).decode()
+    return "\n".join([
+        "[Interface]",
+        f"PrivateKey = {priv}",
+        f"Address = {inbound.get('wg_address') or '10.7.0.2/32'}",
+        f"DNS = {inbound.get('wg_dns') or '1.1.1.1, 8.8.8.8'}",
+        f"MTU = {inbound.get('wg_mtu') or 1420}",
+        "",
+        "[Peer]",
+        f"PublicKey = {inbound.get('wg_public_key') or '<server public key>'}",
+        f"AllowedIPs = {inbound.get('wg_allowed_ips') or '0.0.0.0/0, ::/0'}",
+        f"Endpoint = {address}:{inbound.get('port') or 51820}",
+        "PersistentKeepalive = 25",
+        f"# {name or inbound.get('name') or 'dollax'} · {pub}",
+        "",
+    ])
+
+
 def build_link(inbound: dict, client_uuid: str, address: str, name: str) -> str:
     p = clean_protocol(inbound.get("protocol"))
     if p == "vmess":
@@ -177,6 +239,16 @@ def build_link(inbound: dict, client_uuid: str, address: str, name: str) -> str:
         return trojan_link_for(inbound, client_uuid, address, name)
     if p == "shadowsocks":
         return ss_link_for(inbound, client_uuid, address, name)
+    if p == "hysteria2":
+        return hysteria2_link_for(inbound, client_uuid, address, name)
+    if p == "tuic":
+        return tuic_link_for(inbound, client_uuid, address, name)
+    if p == "socks":
+        return socks_link(inbound, client_uuid, address, name, "socks5")
+    if p == "http":
+        return socks_link(inbound, client_uuid, address, name, "http")
+    if p == "wireguard":
+        return wireguard_conf(inbound, client_uuid, address, name)
     return vless_link_for(inbound, client_uuid, address, name)
 
 
@@ -226,12 +298,18 @@ def decorate_inbound(ib: dict, fallback_host: str = "") -> dict:
     return e
 
 
-def link_list(inbound: dict, client_uuid: str, default_host: str, clean_ips=None):
-    """The N configs of one inbound: rotate over clean IPs when present."""
+def link_list(inbound: dict, client_uuid: str, default_host: str, clean_ips=None, remark=""):
+    """The N configs of one inbound: rotate over clean IPs when present.
+
+    `remark` is appended to every config's name — used by subscriptions so the client app
+    shows the remaining traffic / days (Vodiwalker does the same).
+    """
     inbound = decorate_inbound(inbound, default_host)
     count = max(1, min(40, int(inbound.get("config_count") or 1)))
     ips = _listify(clean_ips) or _listify(inbound.get("clean_ips"))
     names = config_names(inbound, count)
+    if remark:
+        names = [f"{n} | {remark}" for n in names]
     links = []
     for i in range(count):
         if ips:
