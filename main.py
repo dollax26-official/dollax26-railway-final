@@ -371,7 +371,7 @@ def _client_entries(cl: dict, request: Request):
     out = []
     for ref in _client_inbound_refs(cl):
         if ref.startswith("node:"):
-            node, remote = _find_remote(ref)
+            node, remote = api_extras.find_remote(ref)
             if not remote:
                 continue
             ib = dict(remote)
@@ -922,7 +922,7 @@ async def api_list_inbounds(request: Request):
         return unauthorized()
     rows = db.list_inbounds()
     remote = []
-    for ib in _node_inbounds():
+    for ib in api_extras.node_inbounds():
         ib = dict(ib)
         ib["remote"] = True
         ib["ref"] = f"node:{ib.get('node_id')}:{ib.get('id')}"
@@ -1094,14 +1094,7 @@ async def api_create_client(request: Request):
     if row["client_limit"] and len(existing) >= int(row["client_limit"]):
         return JSONResponse({"error": "This inbound reached its client limit."}, status_code=409)
     name = str(d.get("name") or "Client").strip()[:80] or "Client"
-    extras = []
-    for ref in (d.get("extra_inbounds") or []):
-        ref = str(ref or "")
-        if not ref or ref == iid or ref in extras:
-            continue
-        extras.append(ref)
-        if len(extras) >= 4:            # primary + 4 = at most 5 locations per client
-            break
+    extras = _clean_extra_refs(d.get("extra_inbounds"), iid)
     cid = db.create_client(
         iid, name,
         created_by=current_user(request),
@@ -1131,15 +1124,7 @@ async def api_update_client(request: Request, cid: str):
     d = await request.json()
     fields = {}
     if "extra_inbounds" in d:
-        extras = []
-        for ref in (d.get("extra_inbounds") or []):
-            ref = str(ref or "")
-            if not ref or ref == row["inbound_id"] or ref in extras:
-                continue
-            extras.append(ref)
-            if len(extras) >= 4:
-                break
-        fields["extra_inbounds"] = extras
+        fields["extra_inbounds"] = _clean_extra_refs(d.get("extra_inbounds"), row["inbound_id"])
     if "config_count" in d:
         fields["config_count"] = max(1, min(10, as_int(d.get("config_count"), 2, 1, 10)))
     if "name" in d:
@@ -1415,232 +1400,36 @@ async def api_delete_admin(request: Request, username: str):
 # A node is another Dollax panel in a different location. The connecting panel reads that
 # panel's inbounds (with its shared node token) so subscriptions can carry several
 # locations, and those inbounds show up here tagged with the node's location/flag.
-def _node_base(url: str) -> str:
-    base = str(url or "").strip().rstrip("/")
-    if not base:
-        return ""
-    if not base.startswith(("http://", "https://")):
-        base = "https://" + base
-    return base
+def _valid_client_ref(ref: str) -> bool:
+    """A client's extra inbound is either a local inbound id or a node reference."""
+    ref = str(ref or "")
+    if not ref or ref == "undefined" or ref == "null":
+        return False
+    if ref.startswith("node:"):
+        parts = ref.split(":", 2)
+        return len(parts) == 3 and bool(parts[1]) and bool(parts[2]) and parts[2] != "undefined"
+    return bool(db.inbound_row(ref))
 
 
-def _node_export_payload(request: Request) -> dict:
-    """What another panel may read when it presents this panel's node token."""
-    inbounds = []
-    for row in db.list_inbounds():
-        ib = inbound_dict(row)
-        if protocol.clean_protocol(ib.get("protocol")) == "wireguard":
-            continue                      # .conf, not a URI entry
-        inbounds.append({
-            "id": ib["id"], "name": ib.get("name"), "protocol": ib.get("protocol"),
-            "network": ib.get("network"), "security": ib.get("security"),
-            "address": ib.get("address") or effective_host(request), "port": ib.get("port"),
-            "path": ib.get("path"), "host_header": ib.get("host_header"), "sni": ib.get("sni"),
-            "alpn": ib.get("alpn"), "fingerprint": ib.get("fingerprint"),
-            "grpc_service_name": ib.get("grpc_service_name"), "grpc_mode": ib.get("grpc_mode"),
-            "xhttp_mode": ib.get("xhttp_mode"), "header_type": ib.get("header_type"),
-            "flow": ib.get("flow"), "allow_insecure": ib.get("allow_insecure"),
-            "reality_public_key": ib.get("reality_public_key"),
-            "reality_short_id": ib.get("reality_short_id"),
-            "reality_spider_x": ib.get("reality_spider_x"),
-            "ss_method": ib.get("ss_method"), "ss_password": ib.get("ss_password"),
-            "uuid": ib.get("uuid"), "enabled": bool(ib.get("enabled")),
-            "clients": len(db.clients_for_inbound(ib["id"])),
-            "used_bytes": int(ib.get("used_bytes") or 0),
-            "limit_bytes": int(ib.get("limit_bytes") or 0),
-        })
-    return {
-        "ok": True,
-        "panel": {"name": db.setting("panel_name", "Dollax Panel"), "host": effective_host(request),
-                  "version": APP_VERSION},
-        "inbounds": inbounds,
-    }
-
-
-def _fetch_node_export(url: str, token: str, timeout: float = 10.0):
-    """GET <panel>/api/node/export?token=… → (payload | None, error)."""
-    base = _node_base(url)
-    if not base:
-        return None, "no url"
-    try:
-        import httpx
-        with httpx.Client(timeout=timeout, follow_redirects=True) as c:
-            r = c.get(base + "/api/node/export", params={"token": token})
-        if r.status_code == 403:
-            return None, "token rejected (HTTP 403)"
-        if r.status_code != 200:
-            return None, f"HTTP {r.status_code}"
-        data = r.json()
-        if not isinstance(data, dict) or "inbounds" not in data:
-            return None, "unexpected payload"
-        return data, ""
-    except Exception as exc:  # noqa: BLE001
-        return None, f"{exc.__class__.__name__}: {str(exc)[:120]}"
-
-
-def _refresh_node(nid: str) -> dict:
-    row = db.node_row(nid)
-    if not row:
-        return {"ok": False, "error": "Node not found"}
-    data, err = _fetch_node_export(row["url"], row["token"])
-    if not data:
-        db.set_node_snapshot(nid, f"error: {err}", [], "")
-        return {"ok": False, "error": err, "node": _node_view(db.node_row(nid))}
-    items = []
-    for ib in data.get("inbounds", []):
-        ib = dict(ib)
-        ib["node_id"] = nid
-        items.append(ib)
-    panel = data.get("panel") or {}
-    db.set_node_snapshot(nid, "ok", items, "")
-    if panel.get("name") and not row["name"]:
-        db.update_node(nid, {"name": panel["name"]})
-    return {"ok": True, "node": _node_view(db.node_row(nid)), "count": len(items)}
-
-
-def _node_view(row) -> dict:
-    if not row:
-        return {}
-    d = dict(row)
-    d["enabled"] = bool(d.get("enabled"))
-    d["inbounds"] = db.json_raw(d.get("snapshot"), [])
-    d["inbound_count"] = len(d["inbounds"])
-    d.pop("snapshot", None)
-    return d
-
-
-def _node_inbounds() -> list:
+def _clean_extra_refs(refs, primary: str) -> list:
     out = []
-    for row in db.list_nodes():
-        if not row["enabled"]:
+    for ref in refs or []:
+        ref = str(ref or "")
+        if ref in out or ref == primary:
             continue
-        for ib in db.json_raw(row["snapshot"], []):
-            ib = dict(ib)
-            ib["node_id"] = row["id"]
-            ib["node_name"] = row["name"]
-            ib["location"] = row["location"]
-            ib["flag"] = row["flag"]
-            out.append(ib)
+        if not _valid_client_ref(ref):
+            continue
+        out.append(ref)
+        if len(out) >= 4:
+            break
     return out
 
 
-def _find_remote(ref: str):
-    """ref = 'node:<node_id>:<inbound_id>' → (node_row, inbound_dict) or (None, None)."""
-    parts = str(ref or "").split(":", 2)
-    if len(parts) != 3 or parts[0] != "node":
-        return None, None
-    node = db.node_row(parts[1])
-    if not node:
-        return None, None
-    for ib in db.json_raw(node["snapshot"], []):
-        if str(ib.get("id")) == parts[2]:
-            return node, dict(ib)
-    return node, None
+import sys as _sys
 
-
-@app.get("/api/node/export")
-async def api_node_export(request: Request, token: str = ""):
-    """Read-only inbound catalogue for another panel (shared node token)."""
-    if not token or token != db.node_token():
-        return JSONResponse({"error": "Invalid node token."}, status_code=403)
-    return _node_export_payload(request)
-
-
-# Hosts + client sub-links live in api_extras (keeps this file portable).
-api_extras.register(app, sys.modules[__name__])
-
-
-@app.get("/api/node/token")
-async def api_node_token(request: Request):
-    if not authed(request):
-        return unauthorized()
-    if not is_owner(request):
-        return JSONResponse({"error": "Owner only."}, status_code=403)
-    return {"token": db.node_token(), "host": effective_host(request)}
-
-
-@app.post("/api/node/token/rotate")
-async def api_node_token_rotate(request: Request):
-    if not authed(request):
-        return unauthorized()
-    if not is_owner(request):
-        return JSONResponse({"error": "Owner only."}, status_code=403)
-    db.set_setting("node_token", secrets.token_urlsafe(24))
-    db.log(current_user(request), "node-token-rotate", "", ip=client_ip(request))
-    return {"token": db.node_token()}
-
-
-@app.get("/api/nodes")
-async def api_list_nodes(request: Request):
-    if not authed(request):
-        return unauthorized()
-    items = [_node_view(r) for r in db.list_nodes()]
-    return {"items": items, "remote_inbounds": _node_inbounds(),
-            "token": db.node_token() if is_owner(request) else "",
-            "share": {"host": effective_host(request), "path": "/api/node/export"}}
-
-
-@app.post("/api/nodes")
-async def api_add_node(request: Request):
-    if not authed(request):
-        return unauthorized()
-    d = await request.json()
-    url = str(d.get("url") or "")
-    token = str(d.get("token") or "").strip()
-    if not _node_base(url):
-        return JSONResponse({"error": "Enter the other panel's address."}, status_code=400)
-    if not token:
-        return JSONResponse({"error": "Enter that panel's node token (Nodes → Node token)."}, status_code=400)
-    nid = db.add_node({"name": str(d.get("name") or "")[:60], "url": url, "token": token,
-                       "location": str(d.get("location") or "")[:60], "flag": str(d.get("flag") or "")[:8],
-                       "enabled": True, "created_by": current_user(request)})
-    # the fetch is blocking (httpx) - keep it off the event loop so the panel stays responsive
-    res = await asyncio.to_thread(_refresh_node, nid)
-    db.log(current_user(request), "node-add", f"{d.get('name') or url}", ip=client_ip(request))
-    if not res.get("ok"):
-        return {"ok": True, "id": nid, "node": res.get("node"), "warning": res.get("error"),
-                "items": [_node_view(r) for r in db.list_nodes()]}
-    return {"ok": True, "id": nid, "node": res["node"], "items": [_node_view(r) for r in db.list_nodes()]}
-
-
-@app.patch("/api/nodes/{nid}")
-async def api_update_node(request: Request, nid: str):
-    if not authed(request):
-        return unauthorized()
-    if not db.node_row(nid):
-        return JSONResponse({"error": "Node not found"}, status_code=404)
-    d = await request.json()
-    fields = {}
-    for k in ("name", "url", "token", "location", "flag"):
-        if k in d:
-            fields[k] = str(d[k] or "")[:300]
-    if "enabled" in d:
-        fields["enabled"] = as_bool(d.get("enabled"), True)
-    if fields.get("enabled") is True:
-        fields.pop("enabled")
-    db.update_node(nid, fields)
-    db.log(current_user(request), "node-update", nid, ip=client_ip(request))
-    return {"ok": True, "items": [_node_view(r) for r in db.list_nodes()]}
-
-
-@app.post("/api/nodes/{nid}/refresh")
-async def api_refresh_node(request: Request, nid: str):
-    if not authed(request):
-        return unauthorized()
-    if not db.node_row(nid):
-        return JSONResponse({"error": "Node not found"}, status_code=404)
-    res = await asyncio.to_thread(_refresh_node, nid)
-    return {"ok": bool(res.get("ok")), "error": res.get("error") or "",
-            "items": [_node_view(r) for r in db.list_nodes()], "remote_inbounds": _node_inbounds()}
-
-
-@app.delete("/api/nodes/{nid}")
-async def api_delete_node(request: Request, nid: str):
-    if not authed(request):
-        return unauthorized()
-    ok = db.delete_node(nid)
-    db.log(current_user(request), "node-delete", nid, ip=client_ip(request))
-    return {"ok": ok, "items": [_node_view(r) for r in db.list_nodes()]}
+# Hosts, client sub-links and the node (panel-to-panel) endpoints live in
+# api_extras so this file stays small enough to move around.
+api_extras.register(app, _sys.modules[__name__])
 
 
 # ---------------------------------------------------------------- subscriptions
@@ -1663,7 +1452,7 @@ def _client_sub_entries(cl: dict):
     out = []
     for ref in _client_inbound_refs(cl):
         if ref.startswith("node:"):
-            node, remote = _find_remote(ref)
+            node, remote = api_extras.find_remote(ref)
             if not remote:
                 continue
             ib = dict(remote)
