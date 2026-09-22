@@ -59,8 +59,9 @@ RUN mkdir -p /data
 
 EXPOSE 8080
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
-  CMD python -c "import os,urllib.request;urllib.request.urlopen('http://127.0.0.1:'+os.getenv('PORT','8080')+'/health').read()"
+# Liveness is probed by the platform (railway.json -> deploy.healthcheckPath: /health).
+# No Docker-level HEALTHCHECK on purpose: a duplicated probe can mark a healthy
+# container unhealthy and make the proxy answer "Application failed to respond".
 
 # No shell, no quoting, no globs: python resolves $PORT itself (see main.py __main__) and
 # starts the bundled Xray-core from the panel's lifespan hook.
