@@ -14,6 +14,7 @@ xray_bridge_config() — the same limitation the Worker had.
 import base64
 import hashlib
 import json
+import os
 import secrets
 import struct
 import uuid
@@ -79,6 +80,164 @@ def url_b64(data: str) -> str:
 
 
 # ---------------------------------------------------------------- link builders
+# ---------------------------------------------------------------- reality (X25519)
+# Xray's Reality needs an X25519 keypair: the server keeps `privateKey`, clients get the
+# matching `publicKey` (the `pbk=` parameter). Pure python so the panel never depends on
+# the Xray binary being present when a key is generated.
+_P25519 = (1 << 255) - 19
+_A24 = 121665
+
+
+def _x25519_scalar(k: int) -> int:
+    k &= (1 << 255) - 8
+    k |= 1 << 254
+    return k
+
+
+def x25519(private: bytes, point: bytes = None) -> bytes:
+    """RFC 7748 X25519: returns the 32-byte shared/public value."""
+    base = (9).to_bytes(32, "little") if point is None else point
+    k = _x25519_scalar(int.from_bytes(private, "little"))
+    u = int.from_bytes(base, "little") & ((1 << 255) - 1)
+    x1, x2, z2, x3, z3, swap = u, 1, 0, u, 1, 0
+    for t in range(254, -1, -1):
+        kt = (k >> t) & 1
+        if swap ^ kt:
+            x2, x3 = x3, x2
+            z2, z3 = z3, z2
+        swap = kt
+        a = (x2 + z2) % _P25519
+        aa = (a * a) % _P25519
+        b = (x2 - z2) % _P25519
+        bb = (b * b) % _P25519
+        e = (aa - bb) % _P25519
+        c = (x3 + z3) % _P25519
+        d = (x3 - z3) % _P25519
+        da = (d * a) % _P25519
+        cb = (c * b) % _P25519
+        x3 = ((da + cb) % _P25519) ** 2 % _P25519
+        z3 = (x1 * (((da - cb) % _P25519) ** 2 % _P25519)) % _P25519
+        x2 = (aa * bb) % _P25519
+        z2 = (e * (((aa + _A24 * e) % _P25519))) % _P25519
+    if swap:
+        x2, x3 = x3, x2
+        z2, z3 = z3, z2
+    return ((x2 * pow(z2, _P25519 - 2, _P25519)) % _P25519).to_bytes(32, "little")
+
+
+def b64url_raw(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).decode().rstrip("=")
+
+
+def new_reality_keys():
+    """(private_key, public_key) for Xray Reality, base64url without padding."""
+    priv = os.urandom(32)
+    return b64url_raw(priv), b64url_raw(x25519(priv))
+
+
+def public_from_private(private_b64: str) -> str:
+    pad = "=" * (-len(private_b64) % 4)
+    try:
+        raw = base64.urlsafe_b64decode(private_b64 + pad)
+        return b64url_raw(x25519(raw))
+    except Exception:
+        return ""
+
+
+def new_short_id() -> str:
+    return secrets.token_hex(4)          # Reality shortIds are 1-8 bytes hex
+
+
+def reality_settings(ib: dict) -> dict:
+    """Defaults Xray needs for a Reality inbound."""
+    return {
+        "dest": ib.get("reality_dest") or (str(ib.get("sni") or "www.microsoft.com") + ":443"),
+        "serverNames": [ib.get("sni") or "www.microsoft.com"],
+        "privateKey": ib.get("reality_private_key") or "",
+        "shortIds": [ib.get("reality_short_id") or new_short_id()],
+        "fingerprint": clean_fingerprint(ib.get("fingerprint")),
+        "flow": ib.get("flow") or ("xtls-rprx-vision" if (ib.get("network") or "ws") == "tcp" else ""),
+    }
+
+# ---------------------------------------------------------------- reality (X25519)
+# Xray's Reality needs an X25519 keypair: the server keeps `privateKey`, clients get the
+# matching `publicKey` (the `pbk=` parameter). Pure python so the panel never depends on
+# the Xray binary being present when a key is generated.
+_P25519 = (1 << 255) - 19
+_A24 = 121665
+
+
+def _x25519_scalar(k: int) -> int:
+    k &= (1 << 255) - 8
+    k |= 1 << 254
+    return k
+
+
+def x25519(private: bytes, point: bytes = None) -> bytes:
+    """RFC 7748 X25519: returns the 32-byte shared/public value."""
+    base = (9).to_bytes(32, "little") if point is None else point
+    k = _x25519_scalar(int.from_bytes(private, "little"))
+    u = int.from_bytes(base, "little") & ((1 << 255) - 1)
+    x1, x2, z2, x3, z3, swap = u, 1, 0, u, 1, 0
+    for t in range(254, -1, -1):
+        kt = (k >> t) & 1
+        if swap ^ kt:
+            x2, x3 = x3, x2
+            z2, z3 = z3, z2
+        swap = kt
+        a = (x2 + z2) % _P25519
+        aa = (a * a) % _P25519
+        b = (x2 - z2) % _P25519
+        bb = (b * b) % _P25519
+        e = (aa - bb) % _P25519
+        c = (x3 + z3) % _P25519
+        d = (x3 - z3) % _P25519
+        da = (d * a) % _P25519
+        cb = (c * b) % _P25519
+        x3 = ((da + cb) % _P25519) ** 2 % _P25519
+        z3 = (x1 * (((da - cb) % _P25519) ** 2 % _P25519)) % _P25519
+        x2 = (aa * bb) % _P25519
+        z2 = (e * (((aa + _A24 * e) % _P25519))) % _P25519
+    if swap:
+        x2, x3 = x3, x2
+        z2, z3 = z3, z2
+    return ((x2 * pow(z2, _P25519 - 2, _P25519)) % _P25519).to_bytes(32, "little")
+
+
+def b64url_raw(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).decode().rstrip("=")
+
+
+def new_reality_keys():
+    """(private_key, public_key) for Xray Reality, base64url without padding."""
+    priv = os.urandom(32)
+    return b64url_raw(priv), b64url_raw(x25519(priv))
+
+
+def public_from_private(private_b64: str) -> str:
+    pad = "=" * (-len(private_b64) % 4)
+    try:
+        raw = base64.urlsafe_b64decode(private_b64 + pad)
+        return b64url_raw(x25519(raw))
+    except Exception:
+        return ""
+
+
+def new_short_id() -> str:
+    return secrets.token_hex(4)          # Reality shortIds are 1-8 bytes hex
+
+
+def reality_settings(ib: dict) -> dict:
+    """Defaults Xray needs for a Reality inbound."""
+    return {
+        "dest": ib.get("reality_dest") or (str(ib.get("sni") or "www.microsoft.com") + ":443"),
+        "serverNames": [ib.get("sni") or "www.microsoft.com"],
+        "privateKey": ib.get("reality_private_key") or "",
+        "shortIds": [ib.get("reality_short_id") or new_short_id()],
+        "fingerprint": clean_fingerprint(ib.get("fingerprint")),
+        "flow": ib.get("flow") or ("xtls-rprx-vision" if (ib.get("network") or "ws") == "tcp" else ""),
+    }
+
 def _common_query(inbound, fp, extra=None):
     q = {"type": inbound.get("network") or "ws", "security": inbound.get("security") or "tls"}
     sec = q["security"]
