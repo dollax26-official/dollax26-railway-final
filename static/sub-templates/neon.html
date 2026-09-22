@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="$lang" dir="$dir" data-theme="$theme" data-style="$style">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>$panel — $title</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#05060c;color:#e7e9ff;font-family:Inter,system-ui,sans-serif}
+.nn-wrap{max-width:900px;margin:24px auto;padding:0 14px}
+.nn-hero{position:relative;border-radius:20px;padding:22px;overflow:hidden;
+  background:radial-gradient(120% 120% at 0% 0%,#1b1f4b 0%,#080a18 55%);border:1px solid #232a5c}
+.nn-hero:before{content:"";position:absolute;inset:-40% -10% auto -10%;height:220px;
+  background:conic-gradient(from 90deg,#6366f1,#22d3ee,#a855f7,#6366f1);filter:blur(60px);opacity:.35}
+.nn-top{position:relative;display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+.nn-name{font-weight:800;font-size:16px;letter-spacing:.2px}
+.nn-sub{font-size:11px;opacity:.72;margin-top:3px}
+.nn-ring{width:118px;height:118px;border-radius:50%;flex:0 0 auto;display:grid;place-items:center;
+  background:conic-gradient(#22d3ee $pct%, #1e2447 0);box-shadow:0 0 30px #22d3ee44}
+.nn-ring>div{width:92px;height:92px;border-radius:50%;background:#0a0d1f;display:grid;place-items:center;
+  font-weight:800;font-size:19px}
+.nn-qr{background:#fff;border-radius:14px;padding:8px;width:132px;height:132px}
+.nn-grid{position:relative;display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-top:16px}
+.nn-tile{background:#0c1024cc;border:1px solid #222a55;border-radius:14px;padding:12px;backdrop-filter:blur(8px)}
+.nn-k{font-size:10px;opacity:.62;text-transform:uppercase;letter-spacing:.06em}
+.nn-v{font-weight:700;font-size:15px;margin-top:4px;word-break:break-word}
+.nn-card{background:#0c1024cc;border:1px solid #222a55;border-radius:16px;padding:14px;margin-top:12px}
+.sc-head{display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:12px}
+.sc-name{font-weight:700}
+.sc-grow{flex:1 1 auto}
+.sc-badge{font-size:10px;border-radius:99px;padding:2px 8px;background:#1b2350;color:#c7d2fe}
+.sc-badge.ok{background:#0f3a2c;color:#6ee7b7}
+.sc-badge.warn{background:#3a2f10;color:#fcd34d}
+.sc-badge.bad{background:#3a1414;color:#fca5a5}
+.sc-bar{height:7px;border-radius:99px;background:#151b3d;overflow:hidden;margin:10px 0}
+.sc-bar>i{display:block;height:100%;background:linear-gradient(90deg,#22d3ee,#a855f7)}
+.sc-meta{font-size:11px;opacity:.8;margin-bottom:8px;display:flex;gap:10px;flex-wrap:wrap}
+.sc-row{display:flex;gap:8px;align-items:center;background:#111634;border:1px solid #1f2751;
+  border-radius:10px;padding:7px 9px;margin-top:6px}
+.sc-idx{font-size:10px;opacity:.55}
+.sc-code{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  font-family:'JetBrains Mono',monospace;font-size:10.5px}
+.sc-btn{border:1px solid #38418a;background:#141a3d;color:#cdd4ff;border-radius:9px;padding:5px 10px;
+  font-size:11px;cursor:pointer;transition:.15s}
+.sc-btn:hover{background:#22d3ee;color:#04121a;border-color:#22d3ee}
+.nn-foot{text-align:center;opacity:.5;font-size:10px;margin:18px 0 4px}
+@media (max-width:600px){.nn-ring{width:98px;height:98px}.nn-ring>div{width:76px;height:76px;font-size:16px}
+  .nn-qr{width:110px;height:110px}}
+</style>
+</head>
+<body>
+<div class="nn-wrap">
+  <div class="nn-hero">
+    <div class="nn-top">
+      <div style="min-width:0">
+        <div class="nn-name">$panel · $title</div>
+        <div class="nn-sub">$endpoint</div>
+        <div class="nn-sub">$protocol · $clients $l_clients · $configs $l_configs</div>
+      </div>
+      <div style="flex:1 1 auto"></div>
+      <div class="nn-ring"><div>$pct%</div></div>
+      <div class="nn-qr">$qr</div>
+    </div>
+    <div class="nn-grid">$tags</div>
+  </div>
+
+  <div class="nn-card">
+    <div class="nn-k">$l_sub</div>
+    <div class="sc-row">
+      <code class="sc-code">$sub_url</code>
+      <button class="sc-btn" type="button" data-copy="$sub_url">$l_copy</button>
+      <button class="sc-btn" type="button" data-copy="$sub_clash">$l_clash</button>
+      <button class="sc-btn" type="button" data-copy="$sub_singbox">$l_singbox</button>
+    </div>
+  </div>
+
+  $cards
+
+  <p class="nn-foot">$l_footer · $panel</p>
+</div>
+<script>
+document.addEventListener('click', function (e) {
+  var b = e.target.closest('[data-copy]');
+  if (!b) return;
+  var txt = b.getAttribute('data-copy') || '';
+  var done = function () { var o = b.textContent; b.textContent = '$l_copied'; setTimeout(function () { b.textContent = o; }, 1200); };
+  if (navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(txt).then(done, done); }
+  else { var ta = document.createElement('textarea'); ta.value = txt; document.body.appendChild(ta); ta.select();
+         try { document.execCommand('copy'); } catch (err) {} document.body.removeChild(ta); done(); }
+});
+</script>
+</body>
+</html>
