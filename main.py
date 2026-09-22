@@ -291,20 +291,27 @@ def _looks_like_ip(value) -> bool:
 
 
 def client_remark(cl: dict) -> str:
-    """What the node name should say inside a subscription: traffic left + days left."""
+    """The tail of every config name: who it is, how much traffic is left, how long.
+
+    Shown inside client apps as `DE-Frankfurt | 2 configs | ...` - every piece carries an
+    emoji so the important numbers are readable at a glance in a long node list.
+    """
     limit = int(cl.get("limit_bytes") or 0)
     used = int(cl.get("used_bytes") or 0)
-    parts = [f"{protocol.fmt_bytes(max(0, limit - used))} left" if limit else "\u221e traffic"]
+    left = protocol.fmt_bytes(max(0, limit - used)) if limit else "\u221e"
+    parts = [f"\U0001F464 {str(cl.get('name') or 'client')[:32]}", f"\U0001F4E6 {left} left"]
     if cl.get("expires_at"):
         d = db.days_left(cl.get("expires_at"))
         if d is None:
-            pass
+            parts.append("\u23F3 no expiry")
         elif d < 0:
-            parts.append("expired")
+            parts.append("\u23F3 expired")
         elif d == 0:
-            parts.append("ends today")
+            parts.append("\u23F3 ends today")
         else:
-            parts.append(f"{d}d left")
+            parts.append(f"\u23F3 {d}d left")
+    else:
+        parts.append("\u23F3 \u221e")
     return " · ".join(parts)
 
 
@@ -365,6 +372,38 @@ def _client_inbound_refs(cl: dict) -> list:
     return refs[:5]
 
 
+def reality_endpoint() -> tuple:
+    """The panel's raw-TCP public endpoint for Reality, if the owner configured one."""
+    host = str(db.setting("reality_host") or "").strip()
+    port = as_int(db.setting("reality_public_port"), 0, 0, 65535)
+    return host, port
+
+
+def link_inbound(ib: dict, request: Request) -> dict:
+    """A copy of the inbound that is safe to build client links from.
+
+    Reality cannot survive a TLS-terminating proxy, so when its address still points at the
+    panel's own HTTPS domain (or is empty) the configured raw-TCP endpoint is substituted.
+    """
+    ib = dict(ib)
+    if protocol.clean_protocol(ib.get("protocol")) == "wireguard":
+        return ib
+    if str(ib.get("security") or "").lower() != "reality":
+        return ib
+    host, port = reality_endpoint()
+    base = str(db.setting("public_base_url") or "")
+    panel_hosts = {str(effective_host(request) or "").lower(),
+                   base.replace("https://", "").replace("http://", "").split("/")[0].lower()}
+    addr = str(ib.get("address") or "").strip()
+    bare = addr.replace("https://", "").replace("http://", "").split("/")[0].lower()
+    if host and (not addr or addr.lower() in panel_hosts or bare in panel_hosts):
+        ib["address"] = host
+        ib["_reality_endpoint"] = True
+        if port:
+            ib["port"] = port
+    return ib
+
+
 def _client_entries(cl: dict, request: Request):
     """[(inbound_dict, uuid, address, location)] for every location this client uses."""
     host = effective_host(request)
@@ -384,7 +423,7 @@ def _client_entries(cl: dict, request: Request):
         row = db.inbound_row(ref)
         if not row:
             continue
-        ib = dict(row)
+        ib = link_inbound(dict(row), request)
         ib["clean_ips"] = db.json_list(ib.get("clean_ips"))
         ips = db.json_list(cl.get("clean_ips")) or ib.get("clean_ips") or []
         addr = ib.get("address") or host
@@ -557,7 +596,7 @@ async def api_me_prefs(request: Request):
     prefs.update({k: v for k, v in (d or {}).items()
                  if k in ("language", "theme", "style", "font", "music", "music_volume", "music_track",
                           "accent", "motion", "background", "bg_dim", "bg_blur", "bg_enabled",
-                          "sub_template")})
+                          "sub_template", "reality_host", "reality_public_port")})
     db.set_prefs(current_user(request), prefs)
     return {"ok": True, "prefs": prefs}
 
@@ -773,6 +812,37 @@ async def api_diagnostics(request: Request):
             "directly: leave Address empty or use the panel domain.",
             "Inbounds → Edit → Address → Use panel domain")
     with_clean = [i["name"] for i in inbounds if db.json_list(i.get("clean_ips"))]
+    # Reality / port sanity: configs that cannot work through the public HTTPS port
+    try:
+        default_port = as_int(db.setting("default_port", "443"), 443, 1, 65535)
+        rhost, rport = reality_endpoint()
+        panel_host = effective_host(request)
+        for row in inbounds:
+            ib = dict(row)
+            if not ib.get("enabled") or protocol.clean_protocol(ib.get("protocol")) == "wireguard":
+                continue
+            addr = str(ib.get("address") or "")
+            if str(ib.get("security") or "").lower() == "reality":
+                if rport and (not addr or addr == panel_host):
+                    add("ok", "Reality uses the raw TCP endpoint",
+                        f"{ib['name']} -> {rhost}:{rport} (from Settings -> Xray-core)")
+                elif not addr or addr == panel_host:
+                    add("warn", "Reality has no raw TCP endpoint",
+                        f"{ib['name']}: Reality cannot pass through the HTTPS port. Set the "
+                        "Reality domain + public port in Settings -> Xray-core (after creating a "
+                        "Railway TCP proxy), or put the TCP-proxy address in the inbound.",
+                        "Settings -> Xray-core -> Reality TCP domain / public port")
+                else:
+                    add("ok", "Reality endpoint set on the inbound",
+                        f"{ib['name']} -> {addr}:{ib.get('port')}")
+            elif int(ib.get("port") or 0) not in (default_port, 443):
+                add("warn", "Inbound port is not reachable through the panel domain",
+                    f"{ib['name']} uses port {ib.get('port')} while clients reach the panel on "
+                    f"{default_port}; fix the inbound's port or the panel's default port.",
+                    "Inbounds -> Edit -> Port")
+    except Exception:  # noqa: BLE001
+        pass
+
     if with_clean:
         add("ok", f"{len(with_clean)} inbound(s) rotate clean IPs", ", ".join(with_clean[:6]))
     else:
@@ -949,7 +1019,7 @@ async def api_create_inbound(request: Request):
     db.log(current_user(request), "inbound-create", fields["name"], ip=client_ip(request))
     ib = inbound_dict(db.inbound_row(iid))
     self_uuid = db.inbound_row(iid)["uuid"]
-    ib["links"] = protocol.link_list(ib, self_uuid, effective_host(request))
+    ib["links"] = protocol.link_list(link_inbound(ib, request), self_uuid, effective_host(request))
     ib["link"] = ib["links"][0] if ib["links"] else ""
     ib["sub_url"] = f"{base_url(request)}/sub/{db.inbound_row(iid)['sub_token']}"
     return {"ok": True, "id": iid, "inbound": ib}
@@ -1049,7 +1119,8 @@ async def api_inbound_info(request: Request, iid: str):
     clients = [client_dict(c, request, inbound=dict(row)) for c in db.clients_for_inbound(iid)]
     self_cl = _inbound_as_client(row)
     return {"inbound": ib, "clients": clients,
-            "self_link": protocol.link_list(ib, self_cl["uuid"], effective_host(request))[0] if self_cl["uuid"] else "",
+            "self_link": (protocol.link_list(link_inbound(ib, request), self_cl["uuid"],
+                                             effective_host(request)) or [""])[0] if self_cl["uuid"] else "",
             "sub_url": f"{base_url(request)}/sub/{row['sub_token']}",
             "config_count": int(row["config_count"] or 1)}
 
@@ -1282,12 +1353,13 @@ async def api_set_settings(request: Request):
     if not is_owner(request):
         return JSONResponse({"error": "Only the owner can change panel settings."}, status_code=403)
     d = await request.json()
-    for key in ("panel_name", "public_base_url", "default_port", "xray_bridge_host", "xray_bridge_port"):
+    allowed = ("panel_name", "public_base_url", "default_port", "xray_bridge_host", "xray_bridge_port",
+               "reality_host", "reality_public_port")
+    for key in allowed:
         if key in d:
             db.set_setting(key, str(d[key])[:200].strip())
     db.log(current_user(request), "settings-update",
-           ",".join(k for k in d if k in ("panel_name", "public_base_url", "default_port",
-                                           "xray_bridge_host", "xray_bridge_port")),
+           ",".join(k for k in d if k in allowed),
            ip=client_ip(request))
     s = db.all_settings()
     s.pop("iran_ips_v1", None)
