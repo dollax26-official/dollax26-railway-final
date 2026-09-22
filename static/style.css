@@ -334,3 +334,27 @@ html[data-bg="on"] .tblwrap{backdrop-filter:blur(10px)}
 .diag-row { display: flex; justify-content: space-between; gap: 10px; padding: 5px 0;
   border-bottom: 1px solid var(--line); font-size: 11px; }
 .diag-row code { text-align: end; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---- nodes + sub-template picker (Settings / Nodes) ---- */
+.pick-list { display: flex; flex-direction: column; gap: 4px; max-height: 168px; overflow: auto;
+  border: 1px solid var(--line); border-radius: 9px; padding: 7px 9px; }
+.pick { font-size: 11px; }
+.pick input { margin-inline-end: 7px; }
+.tpl-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px; }
+.tpl-card { display: flex; flex-direction: column; gap: 5px; padding: 9px; border: 1px solid var(--line);
+  border-radius: 11px; cursor: pointer; transition: .15s; background: color-mix(in srgb, var(--card-bg) 92%, transparent); }
+.tpl-card:hover { border-color: var(--accent); transform: translateY(-1px); }
+.tpl-card.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.tpl-card b { font-size: 11.5px; font-weight: 650; }
+.tpl-card .muted { font-size: 10px; line-height: 1.35; }
+.tpl-thumb { height: 62px; border-radius: 8px; display: grid; place-items: center; font-size: 11px;
+  font-weight: 700; letter-spacing: .04em; color: #fff; text-align: center; padding: 4px; }
+.tpl-xui { background: linear-gradient(135deg, #1f2937, #0f172a); }
+.tpl-aurora { background: linear-gradient(135deg, #4f46e5, #0ea5e9); }
+.tpl-neon { background: linear-gradient(135deg, #0f172a, #22d3ee 60%, #a855f7); }
+.tpl-terminal { background: linear-gradient(135deg, #04120c, #16d97a); }
+.tpl-minimal { background: linear-gradient(135deg, #f8fafc, #cbd5e1); color: #0f172a; }
+.tpl-bento { background: linear-gradient(135deg, #121821, #3ea6ff 70%, #7c5cff); }
+.tpl-actions { display: flex; gap: 6px; margin-top: 2px; }
+.node-flag { font-size: 13px; }
+@media (max-width: 640px) { .tpl-grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); } }
