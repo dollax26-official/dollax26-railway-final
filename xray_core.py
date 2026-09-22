@@ -186,14 +186,32 @@ def build_config(inbounds, clients_by_inbound, base=None) -> dict:
     STATE["reality_ports"] = reality_ports
     cfg = {
         "log": {"loglevel": os.getenv("XRAY_LOGLEVEL") or "warning"},
+        # Resolve through public resolvers: the big services (YouTube, Instagram, Telegram)
+        # are CDN-heavy, and a broken/blocked container resolver makes them load slowly or
+        # not at all even though the tunnel itself is fine.
+        "dns": {
+            "servers": [
+                "1.1.1.1",
+                "8.8.8.8",
+                {"address": "https://1.1.1.1/dns-query", "domains": ["geosite:geolocation-!cn"]},
+            ],
+            "queryStrategy": "UseIPv4",
+            "disableFallback": False,
+        },
         "inbounds": xs,
         "outbounds": [
-            {"tag": "direct", "protocol": "freedom", "settings": {"domainStrategy": "UseIPv4"}},
+            {"tag": "direct", "protocol": "freedom",
+             "settings": {"domainStrategy": "UseIPv4"},
+             "streamSettings": {"sockopt": {"tcpFastOpen": True, "tcpNoDelay": True}}},
             {"tag": "block", "protocol": "blackhole"},
         ],
         "routing": {
             "domainStrategy": "AsIs",
             "rules": [
+                # QUIC/HTTP3 is UDP: the WebSocket tunnel carries TCP, so let browsers fall
+                # back to TCP+TLS instead of stalling on a UDP flow that cannot be relayed.
+                # This is what makes YouTube/Instagram/Telegram feel normal through the panel.
+                {"type": "field", "network": "udp", "port": "443", "outboundTag": "block"},
                 {"type": "field", "ip": ["geoip:private"], "outboundTag": "block"},
                 {"type": "field", "protocol": ["bittorrent"], "outboundTag": "block"},
             ],
