@@ -366,3 +366,34 @@ async def api_delete_node(request: Request, nid: str):
     return {"ok": ok, "items": [node_view(r) for r in m.db.list_nodes()]}
 
 
+@nodes.post("/api/inbounds/use-panel-domain")
+async def api_inbounds_use_panel_domain(request: Request):
+    """Point every non-Reality inbound at the panel's own domain in one go.
+
+    A config only works when its Address really front-ends this panel. After a domain change
+    (or when an inbound was created with another host - which is why configs "from other
+    countries" fail) this fixes them all at once.
+    """
+    if not m.authed(request):
+        return m.unauthorized()
+    if not m.is_owner(request):
+        return JSONResponse({"error": "Owner only."}, status_code=403)
+    host = m.effective_host(request)
+    port = m.as_int(m.db.setting("default_port", "443"), 443, 1, 65535)
+    changed, skipped = [], []
+    for row in m.db.list_inbounds():
+        ib = dict(row)
+        if m.protocol.clean_protocol(ib.get("protocol")) == "wireguard":
+            continue
+        if str(ib.get("security") or "").lower() == "reality":
+            skipped.append(ib["name"])          # Reality needs its own raw TCP endpoint
+            continue
+        fields = {"address": host, "port": port, "host_header": host}
+        if str(ib.get("security") or "") != "none":
+            fields["sni"] = host
+        m.db.update_inbound(ib["id"], fields)
+        changed.append(ib["name"])
+    m.db.log(m.current_user(request), "inbounds-use-panel-domain", str(len(changed)) + " changed",
+           ip=m.client_ip(request))
+    return {"ok": True, "changed": changed, "skipped_reality": skipped, "host": host,
+            "items": [m.inbound_dict(r) for r in m.db.list_inbounds()]}
