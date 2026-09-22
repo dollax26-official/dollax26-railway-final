@@ -63,7 +63,24 @@ const I18N = {
     failed: 'Failed',
     xrayNote: 'Xray-core ships inside the Docker image and is restarted automatically when inbounds change.',
     wgPublicKey: 'WG server public key', wgAddress: 'WG peer address',
-    nav_nodes: 'Nodes', nodesNote: 'Connect another Dollax panel (any location) with its node token. Its inbounds appear here and can be used in subscriptions, so one client can carry several locations.',
+    editClient: 'Edit client',
+    expiresAt: 'Expires exactly at (date & time)',
+    subLinks: 'Sub links',
+    subLinksNote: 'Attach other clients\' subscriptions here: their VLESS configs are then delivered inside this client\'s subscription too.',
+    linkThisSub: 'Link subscription',
+    noSubLinks: 'No linked subscriptions yet',
+    linkedSubs: 'linked',
+    noOtherClients: 'No other clients yet',
+    optional: 'optional',
+    enabled: 'Enabled',
+    confirmDelete: 'Delete this?',
+    nav_nodes: 'Nodes', nav_hosts: 'Hosts',
+    hostsNote: 'The addresses your VLESS configs should hand out (like x-ui hosts). Pick any of them per inbound and every generated config rotates over exactly those addresses.',
+    addHost: 'Add host(s)', hostAddress: 'Address / host',
+    hostsPlaceholder: 'de1.example.com\n104.18.149.200',
+    hostsForInbound: 'Addresses for this inbound (from Hosts)', onePerLine: 'one address per line',
+    hostAdded: 'Host(s) saved', hostRemoved: 'Host removed', noHosts: 'No hosts yet',
+    noHostsHint: 'Add addresses in the Hosts page first.', nodesNote: 'Connect another Dollax panel (any location) with its node token. Its inbounds appear here and can be used in subscriptions, so one client can carry several locations.',
     nodeToken: 'This panel\u2019s node token', nodeTokenLbl: 'That panel\u2019s node token',
     nodeTokenHint: 'paste the token shown on the other panel', nodeName: 'Node name', nodeUrl: 'Panel address',
     nodeLocation: 'Location', nodeFlag: 'Flag / code', addNode: 'Add node', refreshAll: 'Refresh all',
@@ -74,7 +91,7 @@ const I18N = {
     lastSeen: 'Last sync', subTemplates: 'Sub templates',
     subTemplatesNote: 'Pick the design used for the subscription pages of the clients you create.',
     subTemplatesApply: 'Applies to the clients you create (owner sees every design). Press Save appearance to store it.',
-    primaryLocation: 'primary', extraLocations: 'Extra locations', upToThree: 'up to 3 inbounds per client',
+    primaryLocation: 'primary', extraLocations: 'Extra locations', upToFive: 'up to 5 inbounds per client',
     configsPerClient: 'Configs per client', connectNodeFirst: 'Connect a node to add more locations.',
     preview: 'Preview', needClientForPreview: 'Create a client first to preview a design.',
     wgNote: 'WireGuard configs are generated for your WG server. Railway exposes TCP only, so the WG endpoint itself must run on a host with UDP + TUN.',
@@ -148,7 +165,7 @@ const I18N = {
     bgBlur: 'محو', uploadBg: 'آپلود تصویر', removeBg: 'حذف پس‌زمینه‌ی من',
     bgPerUser: 'پس‌زمینه‌ی شما فقط در حساب خودتان دیده می‌شود.',
     bgEnabled: 'استفاده از پس‌زمینه', saveAppearance: 'ذخیره‌ی ظاهر', resetAppearance: 'بازنشانی',
-    fontFamily: 'فونت', bgUploaded: 'پس‌زمینه ذخیره شد', bgRemoved: 'پس‌زمینه حذف شد', usePanelDomain: 'دامنه‌ی پنل', exportLedger: 'خروجی لجند (CSV)', lastGenerated: 'آخرین زمان ساخت کانفیگ', fetches: 'دریافت سابسکریپشن', xrayCore: 'هستهٔ Xray', addMusic: 'افزودن موسیقی', musicPerUser: 'در حساب شما ذخیره می‌شود؛ دفعه بعد آپلود لازم نیست.', defaultMusic: 'آهنگ پیش‌فرض پنل', noMusic: 'هنوز آهنگی نیست', useMusic: 'استفاده از این آهنگ', musicAdded: 'موسیقی ذخیره شد', musicRemoved: 'آهنگ حذف شد', readFailed: 'خواندن فایل ممکن نشد', unsavedChanges: 'تغییرات ذخیره‌نشده', restartCore: 'راه‌اندازی مجدد هسته', refresh: 'بازخوانی', failed: 'ناموفق', xrayCore: 'هستهٔ Xray', xrayNote: 'هستهٔ Xray داخل ایمیج داکر است و با تغییر اینباندها خودکار ریستارت می‌شود.', wgPublicKey: 'کلید عمومی سرور WG', wgAddress: 'آدرس peer در WG', wgNote: 'کانفیگ‌های WireGuard برای سرور WG شما ساخته می‌شوند؛ Railway فقط TCP می‌دهد.', udpNote: 'پروتکل QUIC/UDP: کانفیگ‌ها ساخته می‌شوند اما Railway فقط TCP را باز می‌کند.', proxyNote: 'لینک‌های پروکسی SOCKS5/HTTP برای هر کلاینت ساخته می‌شوند.', realityNote: 'پروتکل Reality به یک پورت TCP خام نیاز دارد (از پورت HTTPS عبور نمی‌کند). در Railway یک TCP Proxy به پورتی که در تنظیمات → هستهٔ Xray نشان داده می‌شود (پیش‌فرض 8443) بسازید و همان دامنه و پورت را در Address/Port وارد کنید. کلید و short id خودکار ساخته می‌شوند.', realityPorts: 'پورت‌های TCP رلیتی', nothingToCopy: 'چیزی برای کپی نیست', copyFailed: 'مرورگر اجازهٔ کپی نداد؛ دستی انتخاب و کپی کنید',
+    fontFamily: 'فونت', bgUploaded: 'پس‌زمینه ذخیره شد', bgRemoved: 'پس‌زمینه حذف شد', usePanelDomain: 'دامنه‌ی پنل', exportLedger: 'خروجی لجند (CSV)', lastGenerated: 'آخرین زمان ساخت کانفیگ', fetches: 'دریافت سابسکریپشن', xrayCore: 'هستهٔ Xray', addMusic: 'افزودن موسیقی', musicPerUser: 'در حساب شما ذخیره می‌شود؛ دفعه بعد آپلود لازم نیست.', defaultMusic: 'آهنگ پیش‌فرض پنل', noMusic: 'هنوز آهنگی نیست', useMusic: 'استفاده از این آهنگ', musicAdded: 'موسیقی ذخیره شد', musicRemoved: 'آهنگ حذف شد', readFailed: 'خواندن فایل ممکن نشد', unsavedChanges: 'تغییرات ذخیره‌نشده', restartCore: 'راه‌اندازی مجدد هسته', refresh: 'بازخوانی', failed: 'ناموفق', xrayCore: 'هستهٔ Xray', xrayNote: 'هستهٔ Xray داخل ایمیج داکر است و با تغییر اینباندها خودکار ریستارت می‌شود.', wgPublicKey: 'کلید عمومی سرور WG', wgAddress: 'آدرس peer در WG', wgNote: 'کانفیگ‌های WireGuard برای سرور WG شما ساخته می‌شوند؛ Railway فقط TCP می‌دهد.', udpNote: 'پروتکل QUIC/UDP: کانفیگ‌ها ساخته می‌شوند اما Railway فقط TCP را باز می‌کند.', proxyNote: 'لینک‌های پروکسی SOCKS5/HTTP برای هر کلاینت ساخته می‌شوند.', realityNote: 'پروتکل Reality به یک پورت TCP خام نیاز دارد (از پورت HTTPS عبور نمی‌کند). در Railway یک TCP Proxy به پورتی که در تنظیمات → هستهٔ Xray نشان داده می‌شود (پیش‌فرض 8443) بسازید و همان دامنه و پورت را در Address/Port وارد کنید. کلید و short id خودکار ساخته می‌شوند.', realityPorts: 'پورت‌های TCP رلیتی', nothingToCopy: 'چیزی برای کپی نیست', copyFailed: 'مرورگر اجازهٔ کپی نداد؛ دستی انتخاب و کپی کنید', edit: 'ویرایش', editClient: 'ویرایش کاربر', expiresAt: 'انقضای دقیق (تاریخ و ساعت)', subLinks: 'ساب‌لینک‌ها', linkThisSub: 'افزودن ساب‌لینک', noSubLinks: 'ساب‌لینک متصل نیست', linkedSubs: 'متصل', noOtherClients: 'کاربر دیگری نیست', created: 'ساخته شده', subLinksNote: 'ساب‌سکریپشن بقیهٔ کاربران را اینجا وصل کنید؛ کانفیگ‌های VLESS آن‌ها هم داخل ساب این کاربر می‌آید.', optional: 'اختیاری', enabled: 'فعال', confirmDelete: 'حذف شود؟',
     appearanceSaved: 'ظاهر ذخیره شد', appearanceReset: 'ظاهر به حالت پیش‌فرض برگشت',
     uploading: 'در حال آپلود…',
     created: 'ساخته شد', updated: 'به‌روز شد', deleted: 'حذف شد', saved: 'ذخیره شد',
@@ -559,6 +576,69 @@ function markBgPicks() {
   $$('[data-bg-pick]').forEach((el) => el.classList.toggle('on', !!(APPR && APPR.background === el.dataset.bgPick)));
 }
 
+/* ------------------------------------------------------------------ hosts */
+async function pageHosts(view) {
+  const hosts = S.hosts || [];
+  const rows = hosts.map((h) => `
+    <tr>
+      <td><b class="mono">${esc(h.address)}</b>${h.label ? `<span class="sub">${esc(h.label)}</span>` : ''}</td>
+      <td class="muted">${esc(h.remark || '—')}</td>
+      <td><span class="badge ${h.enabled ? 'ok' : ''}">${h.enabled ? T('enabled') : T('disabled')}</span></td>
+      <td class="muted sub">${esc((h.created || '').slice(0, 10))}</td>
+      <td class="num" style="white-space:nowrap">
+        <button class="btn sm" data-hact="toggle" data-id="${esc(h.id)}">${h.enabled ? T('disable') : T('enable')}</button>
+        <button class="btn sm danger" data-hact="del" data-id="${esc(h.id)}">${T('del')}</button></td>
+    </tr>`).join('');
+  view.innerHTML = `
+    <div class="card">
+      <div class="card-head"><h2>${T('nav_hosts')}</h2></div>
+      <p class="muted" style="font-size:10.5px;margin-bottom:11px">${T('hostsNote')}</p>
+      <div class="form-grid">
+        <label class="field span-2"><span>${T('hostAddress')}</span>
+          <textarea id="hAddresses" rows="3" placeholder="${T('hostsPlaceholder')}"
+            style="width:100%;font-family:var(--mono);font-size:11px"></textarea></label>
+        <label class="field"><span>${T('label') || 'Label'}</span><input id="hLabel" placeholder="Frankfurt"></label>
+        <label class="field"><span>${T('note')}</span><input id="hRemark" placeholder="${T('optional') || 'optional'}"></label>
+      </div>
+      <div class="toolbar" style="margin-top:12px">
+        <button class="btn primary" id="hAdd">${T('addHost')}</button>
+        <span class="muted" style="font-size:10px">${T('onePerLine')}</span>
+      </div>
+    </div>
+    <div class="tblwrap">
+      ${hosts.length ? `<table><thead><tr><th>${T('hostAddress')}</th><th>${T('note')}</th><th>${T('status')}</th>
+        <th>${T('created') || 'Created'}</th><th>${T('actions')}</th></tr></thead><tbody>${rows}</tbody></table>`
+        : `<div class="empty"><b>${T('noHosts')}</b>${T('noHostsHint')}</div>`}
+    </div>`;
+
+  if ($('hAdd')) $('hAdd').onclick = async () => {
+    const btn = $('hAdd');
+    btn.disabled = true;
+    try {
+      const r = await api('POST', '/api/hosts', { addresses: $('hAddresses').value, label: $('hLabel').value,
+                                                  remark: $('hRemark').value });
+      S.hosts = r.items || [];
+      toast(r.added ? `${T('hostAdded')} (${r.added})` : T('nothingToCopy'), r.added ? 'ok' : 'bad');
+      goto('hosts');
+    } catch (e) { toast(e.message, 'bad'); btn.disabled = false; }
+  };
+  $$('[data-hact]').forEach((b) => (b.onclick = async () => {
+    const id = b.dataset.id;
+    try {
+      if (b.dataset.hact === 'toggle') {
+        const h = (S.hosts || []).find((x) => x.id === id) || {};
+        await api('PATCH', '/api/hosts/' + id, { enabled: !h.enabled });
+      } else {
+        if (!(await confirmAsync(T('confirmDelete')))) return;
+        await api('DELETE', '/api/hosts/' + id);
+        toast(T('hostRemoved'), 'ok');
+      }
+      await loadAll();
+      goto('hosts');
+    } catch (e) { toast(e.message, 'bad'); }
+  }));
+}
+
 /* ------------------------------------------------------------------ nodes */
 async function pageNodes(view) {
   const nodes = S.nodes || [];
@@ -668,7 +748,8 @@ async function pageNodes(view) {
 /* ------------------------------------------------------------------ shell */
 function navList() {
   const items = [['overview', T('nav_overview'), '◈'], ['inbounds', T('nav_inbounds'), '≋'],
-    ['clients', T('nav_clients'), '☰'], ['nodes', T('nav_nodes'), '⬢'], ['logs', T('nav_logs'), '≡']];
+    ['clients', T('nav_clients'), '☰'], ['hosts', T('nav_hosts'), '⛁'],
+    ['nodes', T('nav_nodes'), '⬢'], ['logs', T('nav_logs'), '≡']];
   if (isOwner()) items.push(['admins', T('nav_admins'), '★']);
   items.push(['settings', T('nav_settings'), '⚙']);
   return items.map(([p, label, ic]) =>
@@ -711,11 +792,12 @@ function buildShell() {
 }
 
 function goto(page) {
-  const allowed = ['overview', 'inbounds', 'clients', 'nodes', 'logs', 'settings'];
+  const allowed = ['overview', 'inbounds', 'clients', 'hosts', 'nodes', 'logs', 'settings'];
   if (page === 'admins' && !isOwner()) page = 'overview';
   S.page = allowed.concat(['admins']).includes(page) ? page : 'overview';
   const titles = { overview: T('nav_overview'), inbounds: T('nav_inbounds'), clients: T('nav_clients'),
-    nodes: T('nav_nodes'), logs: T('nav_logs'), admins: T('nav_admins'), settings: T('nav_settings') };
+    hosts: T('nav_hosts'), nodes: T('nav_nodes'), logs: T('nav_logs'), admins: T('nav_admins'),
+    settings: T('nav_settings') };
   $('pageTitle').textContent = titles[S.page];
   $$('#nav button').forEach((b) => b.classList.toggle('on', b.dataset.p === S.page));
   render();
@@ -738,6 +820,8 @@ async function loadAll() {
   } catch (e) { S.nodes = S.nodes || []; S.remoteInbounds = S.remoteInbounds || []; }
   try { const tp = await api('GET', '/api/subtemplates'); S.subTemplates = tp.items || []; }
   catch (e) { S.subTemplates = S.subTemplates || []; }
+  try { const hs = await api('GET', '/api/hosts'); S.hosts = hs.items || []; }
+  catch (e) { S.hosts = S.hosts || []; }
   S.bgPresets = (backgrounds && backgrounds.presets) || [];
   S.bgCustom = !!(backgrounds && backgrounds.custom);
   S.me = me;
@@ -778,6 +862,7 @@ function render() {
   if (S.page === 'overview') pageOverview(page);
   else if (S.page === 'inbounds') { if (needPage(T('nav_inbounds'), pageInbounds)) pageInbounds(page); }
   else if (S.page === 'clients') { if (needPage(T('nav_clients'), pageClients)) pageClients(page); }
+  else if (S.page === 'hosts') { if (needPage(T('nav_hosts'), pageHosts)) pageHosts(page); }
   else if (S.page === 'nodes') { if (needPage(T('nav_nodes'), pageNodes)) pageNodes(page); }
   else if (S.page === 'logs') { if (needPage(T('nav_logs'), pageLogs)) pageLogs(page); }
   else if (S.page === 'admins') { if (needPage(T('nav_admins'), pageAdmins)) pageAdmins(page); }
@@ -1020,6 +1105,14 @@ function openBuilder(ib) {
       <label class="field" id="grpSni"><span>${T('fSni')}</span><input id="bSni" value="${esc(b.sni || '')}" placeholder="empty = host"></label>
       <label class="field" id="grpWgPub"><span>${T('wgPublicKey')}</span><input id="bWgPub" value="${esc(b.wg_public_key || '')}" placeholder="server public key"></label>
       <label class="field" id="grpWgAddr"><span>${T('wgAddress')}</span><input id="bWgAddr" value="${esc(b.wg_address || '')}" placeholder="10.7.0.2/32"></label>
+      </div>
+    <div class="field" style="margin-top:12px"><span>${T('hostsForInbound')}</span>
+      <div class="pick-list" id="bHosts">
+        ${(S.hosts || []).length ? (S.hosts || []).map((h) => `<label class="chk pick"><input type="checkbox" value="${esc(h.address)}"
+          ${(b.clean_ips || []).includes(h.address) ? 'checked' : ''}> <span class="mono">${esc(h.address)}</span>${h.label ? ' · ' + esc(h.label) : ''}</label>`).join('')
+          : `<span class="muted">${T('noHostsHint')}</span>`}
+      </div></div>
+    <div class="form-grid" style="margin-top:0">
     </div>
 
     <div class="form-grid" style="margin-top:12px">
@@ -1093,6 +1186,7 @@ function builderPayload() {
     address: g('bAddress'), port: g('bPort'), path: g('bPath'), fingerprint: g('bFp'),
     host_header: g('bHost'), sni: g('bSni'),
     wg_public_key: g('bWgPub'), wg_address: g('bWgAddr'),
+    hosts: $$('#bHosts input:checked').map((el) => el.value),
     limit_value: g('bLimitGb'), expires_days: g('bDays'),
     client_limit: g('bClientLimit'), config_count: g('bConfigCount'),
     note: g('bNote'), enabled: $('bEnabled') ? $('bEnabled').checked : true,
