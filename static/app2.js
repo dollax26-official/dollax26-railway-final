@@ -87,7 +87,7 @@ async function openEditClient(c) {
   const exp = String(c.expires_at || '').slice(0, 16);
   const extra = c.extra_inbounds || [];
   const pick = (list, selected, kind) => list.map((x) => {
-    const val = kind === 'remote' ? x.ref : x.id;
+    const val = kind === 'remote' ? (x.ref || ('node:' + x.node_id + ':' + x.id)) : x.id;
     const on = selected.includes(val) ? 'checked' : '';
     const name = kind === 'remote'
       ? `${esc(x.flag || '')} ${esc(x.node_name || 'node')} · ${esc(x.name || '')}`
@@ -198,7 +198,7 @@ function openClientDrawer(ib) {
             `<label class="chk pick"><input type="checkbox" value="${esc(x.id)}" data-kind="local">
              <span>${esc(x.name)} · ${esc((x.protocol || '').toUpperCase())}</span></label>`).join('')}
           ${(S.remoteInbounds || []).map((x) =>
-            `<label class="chk pick"><input type="checkbox" value="${esc(x.ref)}" data-kind="remote">
+            `<label class="chk pick"><input type="checkbox" value="${esc(x.ref || ('node:' + x.node_id + ':' + x.id))}" data-kind="remote">
              <span>${esc(x.flag || '')} ${esc(x.node_name || 'node')} · ${esc(x.name || '')} · ${esc((x.protocol || '').toUpperCase())}</span></label>`).join('')}
           ${((S.inbounds || []).length + (S.remoteInbounds || []).length) < 2 ? `<span class="muted">${T('connectNodeFirst')}</span>` : ''}
         </div></label>
