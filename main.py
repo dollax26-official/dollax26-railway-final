@@ -2097,27 +2097,74 @@ async def ws_entry(ws: WebSocket, full_path: str):
 # ---------------------------------------------------------------- entry point
 # `python main.py` must work (Railway / Nixpacks / manual runs) - not only
 # `uvicorn main:app`. Reads $PORT like every PaaS expects.
+def _port_candidates():
+    """The port to listen on. $PORT is what every PaaS injects, but a malformed or missing
+    value must never crash the container: fall back to the usual suspects, in order."""
+    raw = str(os.getenv("PORT") or "").strip()
+    out = []
+    try:
+        value = int(raw)
+        if 1 <= value <= 65535:
+            out.append(value)
+    except Exception:  # noqa: BLE001 - empty / non-numeric / whitespace
+        if raw:
+            print(f"[dollax] WARNING: PORT={raw!r} is not a usable port number; falling back", flush=True)
+    for cand in (8080, 8000, 3000, 5000, 10000):
+        if cand not in out:
+            out.append(cand)
+    return out
+
+
 if __name__ == "__main__":
     import traceback
     import uvicorn
 
-    _port = int(os.getenv("PORT", "8080") or "8080")
-    print(f"[dollax] Dollax Panel {APP_VERSION} starting on 0.0.0.0:{_port}", flush=True)
+    print(f"[dollax] Dollax Panel {APP_VERSION} booting; PORT env = {os.getenv('PORT')!r}", flush=True)
     print(f"[dollax] data db: {db.DB_PATH}", flush=True)
     print(f"[dollax] SECRET_KEY from env: {'yes' if os.getenv('SECRET_KEY') else 'no (a random one is generated per boot)'}",
           flush=True)
     print(f"[dollax] owner seed: {os.getenv('ADMIN_USERNAME') or 'dollax26'} / "
           f"{'env password' if os.getenv('ADMIN_PASSWORD') else 'default dollax26'}", flush=True)
-    try:
+
+    def _serve(port, label):
         uvicorn.run(
             "main:app",
             host="0.0.0.0",
-            port=_port,
+            port=port,
             proxy_headers=True,
             forwarded_allow_ips="*",
             log_level=(os.getenv("LOG_LEVEL") or "info"),
         )
-    except Exception:  # noqa: BLE001 - make the real reason visible in the platform log
-        traceback.print_exc()
-        print("[dollax] FATAL: the server could not start - see the traceback above.", flush=True)
-        raise
+
+    # Safety net: some platform setups route the public domain to a target port that does not
+    # match the PORT they inject. Serving on both means the proxy always finds us. Two uvicorn
+    # processes share the same SQLite DB (WAL) and the same generated config.
+    _ports = _port_candidates()
+    _primary = _ports[0]
+    _extra = 8080 if (_primary != 8080 and os.getenv("DOLLAX_SINGLE_PORT") != "1") else None
+    if _extra:
+        import threading
+        def _extra_server():
+            try:
+                print(f"[dollax] also listening on 0.0.0.0:{_extra} (safety net for target-port mismatch)",
+                      flush=True)
+                _serve(_extra, "extra")
+            except BaseException as exc:  # noqa: BLE001
+                print(f"[dollax] extra listener on {_extra} stopped: {exc.__class__.__name__}", flush=True)
+        threading.Thread(target=_extra_server, daemon=True).start()
+
+    last_error = None
+    for _port in _ports:
+        try:
+            print(f"[dollax] starting on 0.0.0.0:{_port}", flush=True)
+            _serve(_port, "primary")
+            break                      # clean shutdown
+        except SystemExit:
+            break
+        except BaseException as exc:   # noqa: BLE001 - try the next port instead of dying
+            last_error = exc
+            print(f"[dollax] could not serve on port {_port}: {exc.__class__.__name__}: {exc}", flush=True)
+            traceback.print_exc()
+            continue
+    if last_error is not None:
+        print("[dollax] FATAL: no usable port - see the tracebacks above.", flush=True)
