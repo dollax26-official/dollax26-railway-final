@@ -5,6 +5,7 @@ names, same structure) so the ported style.css applies 1:1. The subscription
 page is a standalone, per-inbound graphical page with a real QR code.
 """
 from html import escape
+import os
 
 FONTS = (
     '<link rel="preconnect" href="https://fonts.googleapis.com">'
@@ -78,9 +79,9 @@ def login_html(panel_name="Dollax Panel", error="", lang="en", theme="dark-green
     return _doc(f"{panel_name} — {t('signIn')}", body, lang=lang, theme=theme, style=style)
 
 
-# ---------------------------------------------------------------- subscription page
-def subscription_page(data):
-    """The per-inbound graphical page. `data` is prepared in main.py."""
+# ---------------------------------------------------------------- subscription pages
+def _tpl_aurora(data):
+    """Aurora - the built-in graphical page (donut, QR, per-config copy rows)."""
     lang = data.get("language", "en")
     t = _T(lang)
     esc = escape
@@ -91,13 +92,17 @@ def subscription_page(data):
 
     clients_html = ""
     for c in data.get("clients", []):
-        links = "".join(
-            f'<div class="cfg-row"><span class="cfg-idx">#{i}</span>'
-            f'<code class="cfg-code">{esc(l["link"])}</code>'
-            f'<button class="btn sm" type="button" data-copy="{esc(l["link"], quote=True)}">{t("copy")}</button>'
-            f'</div>'
-            for i, l in enumerate(c.get("links", []), 1)
-        )
+        rows = []
+        for i, l in enumerate(c.get("links", []) or [], 1):
+            link = l if isinstance(l, str) else str((l or {}).get("link") or "")
+            if not link:
+                continue
+            rows.append(
+                f'<div class="cfg-row"><span class="cfg-idx">#{i}</span>'
+                f'<code class="cfg-code">{esc(link)}</code>'
+                f'<button class="btn sm" type="button" data-copy="{esc(link, quote=True)}">{t("copy")}</button>'
+                f'</div>')
+        links = "".join(rows)
         clients_html += f"""
     <div class="client-card fade-in">
       <div class="cc-head">
@@ -179,6 +184,140 @@ document.addEventListener('click', function (e) {{
 </script>"""
     return _doc(f"{data['panel_name']} — {data['title']}", body, lang=lang,
                 theme=data.get("theme", "dark-green"), style=data.get("ui_style", "solid"))
+
+
+
+# ---------------------------------------------------------------- template registry
+# Designs live as plain HTML files in static/sub-templates/ (edit them freely).
+# Placeholders use string.Template syntax: $panel, $title, $endpoint, $protocol,
+# $clients, $configs, $pct, $used, $up, $down, $remaining, $expires, $sub_url,
+# $sub_clash, $sub_singbox, $qr, $tags, $cards, $lang, $dir, $theme, $style, $l_*.
+TEMPLATE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "sub-templates")
+
+TEMPLATE_LIST = [
+    {"id": "xui", "name": "X-UI / 3x-ui", "hint": "The familiar x-ui layout - dark header, big counters, per-config rows."},
+    {"id": "aurora", "name": "Aurora", "hint": "Gradient hero with a usage donut, QR tile and config cards."},
+    {"id": "neon", "name": "Neon Glass", "hint": "Glassy hero, glowing usage ring, neon accents."},
+    {"id": "terminal", "name": "Terminal", "hint": "Monospace console look, green on black."},
+    {"id": "minimal", "name": "Minimal", "hint": "White, quiet, typography first."},
+    {"id": "bento", "name": "Bento", "hint": "Modular stat tiles in a 12-column grid."},
+]
+TEMPLATE_IDS = [t["id"] for t in TEMPLATE_LIST]
+DASH, INF = chr(8212), chr(8734)
+
+
+def _read_template(tid: str) -> str:
+    try:
+        with open(os.path.join(TEMPLATE_DIR, tid + ".html"), encoding="utf-8") as fh:
+            return fh.read()
+    except Exception:
+        return ""
+
+
+def _label_map(t) -> dict:
+    return {
+        "l_used": t("used"), "l_up": t("upload"), "l_down": t("download"),
+        "l_remaining": t("remaining"), "l_expires": t("expires"), "l_copy": t("copy"),
+        "l_copied": t("copied"), "l_sub": t("genericSub"), "l_clash": t("clashSub"),
+        "l_singbox": t("singboxSub"), "l_clients": t("clients"), "l_configs": t("configNodes"),
+        "l_none": t("noClients"), "l_footer": t("subFooter"),
+    }
+
+
+def _tags_html(t, esc, data, cls="xs-tile", kcls="xs-k", vcls="xs-v"):
+    tiles = [
+        (t("used"), data.get("used_human") or data.get("used") or DASH),
+        (t("download"), data.get("down") or DASH),
+        (t("upload"), data.get("up") or DASH),
+        (t("remaining"), data.get("remaining_human") or INF),
+        (t("expires"), data.get("expires_human") or INF),
+    ]
+    parts = []
+    for k, v in tiles:
+        parts.append('<div class="' + cls + '"><div class="' + kcls + '">' + esc(k) + '</div>' +
+                     '<div class="' + vcls + '">' + esc(str(v)) + '</div></div>')
+    return "".join(parts)
+
+
+def _cards_html(t, esc, clients, wrap="sc-card", wide=False):
+    extra = " full" if wide else ""
+    if not clients:
+        return '<div class="' + wrap + extra + '"><p class="sc-meta">' + t("noClients") + '</p></div>'
+    out = []
+    for c in clients:
+        rows = []
+        for i, l in enumerate(c.get("links") or [], 1):
+            l = l if isinstance(l, str) else str((l or {}).get("link") or "")
+            if not l:
+                continue
+            rows.append('<div class="sc-row"><span class="sc-idx">#' + str(i) + '</span>' +
+                        '<code class="sc-code">' + esc(l) + '</code>' +
+                        '<button class="sc-btn" type="button" data-copy="' + esc(l, quote=True) + '">' +
+                        t("copy") + '</button></div>')
+        if not rows:
+            rows = ['<div class="sc-row"><span class="sc-idx">-</span><code class="sc-code">' +
+                    t("noClients") + '</code></div>']
+        out.append(
+            '<div class="' + wrap + extra + '">'
+            '<div class="sc-head"><span class="sc-name">' + esc(c.get("name") or "client") + '</span>'
+            '<span class="sc-badge ' + esc(c.get("status_class") or "") + '">' + esc(c.get("status") or "") + '</span>'
+            '<span class="sc-grow"></span>'
+            '<button class="sc-btn" type="button" data-copy="' + esc(c.get("sub_url") or "", quote=True) + '">' +
+            t("copySub") + '</button></div>'
+            '<div class="sc-bar"><i style="width:' + str(int(c.get("pct") or 0)) + '%"></i></div>'
+            '<div class="sc-meta"><span>' + t("used") + ' <b>' + esc(str(c.get("used") or DASH)) + '</b></span>'
+            '<span>' + t("remaining") + ' <b>' + esc(str(c.get("remaining") or INF)) + '</b></span>'
+            '<span>' + t("expires") + ' <b>' + esc(str(c.get("expires") or INF)) + '</b></span></div>'
+            + "".join(rows) + '</div>')
+    return "".join(out)
+
+
+def subscription_page(data, template="aurora"):
+    """Render with the chosen template. Files in static/sub-templates win; Aurora is the
+    built-in fallback, so the page never breaks when a design file is missing."""
+    from string import Template
+    tid = str(template or "").strip().lower()
+    if tid not in TEMPLATE_IDS:
+        return _tpl_aurora(data)
+    raw = _read_template(tid)
+    if not raw:
+        return _tpl_aurora(data)
+    lang = data.get("language", "en")
+    t = _T(lang)
+    esc = escape
+    clients = data.get("clients") or []
+    shared = {
+        "panel": esc(str(data.get("panel_name") or "")),
+        "title": esc(str(data.get("title") or "")),
+        "endpoint": esc(str(data.get("endpoint") or "")),
+        "protocol": esc(str(data.get("protocol") or "").upper()),
+        "clients": esc(str(data.get("client_count") or 0)),
+        "configs": esc(str(data.get("config_count") or 0)),
+        "pct": esc(str(data.get("pct") or 0)),
+        "used": esc(str(data.get("used_human") or data.get("used") or DASH)),
+        "up": esc(str(data.get("up") or DASH)),
+        "down": esc(str(data.get("down") or DASH)),
+        "remaining": esc(str(data.get("remaining_human") or INF)),
+        "expires": esc(str(data.get("expires_human") or INF)),
+        "sub_url": esc(str(data.get("sub_url") or "")),
+        "sub_clash": esc(str(data.get("sub_clash") or "")),
+        "sub_singbox": esc(str(data.get("sub_singbox") or "")),
+        "lang": lang, "dir": "rtl" if lang == "fa" else "ltr",
+        "theme": esc(str(data.get("theme") or "dark-green")),
+        "style": esc(str(data.get("ui_style") or "solid")),
+        "qr": data.get("qr_svg") or "",
+    }
+    if tid == "bento":
+        tags = _tags_html(t, esc, data, "bn-tile", "bn-k", "bn-v")
+        cards = _cards_html(t, esc, clients, "bn-tile", wide=True)
+    elif tid == "terminal":
+        tags = ""
+        cards = _cards_html(t, esc, clients, "tm-box")
+    else:
+        tags = _tags_html(t, esc, data)
+        cards = _cards_html(t, esc, clients)
+    return Template(raw).safe_substitute({**shared, **_label_map(t), "tags": tags, "cards": cards})
+
 
 
 # ---------------------------------------------------------------- tiny i18n
