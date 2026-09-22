@@ -38,6 +38,7 @@ import db
 import protocol
 import relay
 import xray_core
+import pages
 from pages import dashboard_html, login_html, subscription_page
 
 try:  # real QR codes on the subscription page (graceful without it)
@@ -333,6 +334,63 @@ def inbound_dict(row) -> dict:
     return d
 
 
+def _client_inbound_refs(cl: dict) -> list:
+    """The client's inbounds: its primary one plus up to two more (max 3 total)."""
+    refs = [str(cl.get("inbound_id") or "")]
+    for extra in db.json_raw(cl.get("extra_inbounds"), []):
+        extra = str(extra or "")
+        if extra and extra not in refs:
+            refs.append(extra)
+    return refs[:3]
+
+
+def _client_entries(cl: dict, request: Request):
+    """[(inbound_dict, uuid, address, location)] for every location this client uses."""
+    host = effective_host(request)
+    out = []
+    for ref in _client_inbound_refs(cl):
+        if ref.startswith("node:"):
+            node, remote = _find_remote(ref)
+            if not remote:
+                continue
+            ib = dict(remote)
+            ib["_remote"] = True
+            ib["_location"] = (node["location"] if node else "") or (node["name"] if node else "")
+            uuid = remote.get("uuid") or cl.get("uuid")
+            out.append((ib, uuid, remote.get("address") or host,
+                        (node["location"] if node else "") or (node["name"] if node else "")))
+            continue
+        row = db.inbound_row(ref)
+        if not row:
+            continue
+        ib = dict(row)
+        ib["clean_ips"] = db.json_list(ib.get("clean_ips"))
+        ips = db.json_list(cl.get("clean_ips")) or ib.get("clean_ips") or []
+        addr = ib.get("address") or host
+        for candidate in (ips, ib.get("clean_ips")):
+            items = db.json_list(candidate) if candidate else []
+            if items:
+                addr = str(items[0]).split("#")[0].split(":")[0]
+                break
+        out.append((ib, cl.get("uuid"), addr, ""))
+    return out
+
+
+def _client_links(cl: dict, request: Request):
+    """Every config this client owns (2 per inbound by default, one per location)."""
+    count = max(1, min(10, int(cl.get("config_count") or 2)))
+    links, wg = [], False
+    for ib, uuid, addr, location in _client_entries(cl, request):
+        remark = client_remark(cl) + (f" · {location}" if location else "")
+        if protocol.clean_protocol(ib.get("protocol")) == "wireguard":
+            links.append(protocol.wireguard_conf(ib, uuid, addr, cl.get("name") or ""))
+            wg = True
+            continue
+        links += protocol.link_list(ib, uuid, addr, cl.get("clean_ips") or ib.get("clean_ips"),
+                                    remark=remark, count=count)
+    return links, wg
+
+
 def client_dict(row, request: Request, inbound=None) -> dict:
     d = dict(row)
     d["enabled"] = bool(d.get("enabled"))
@@ -346,6 +404,9 @@ def client_dict(row, request: Request, inbound=None) -> dict:
     d["limit_human"] = protocol.fmt_bytes(d.get("limit_bytes") or 0)
     d["last_config_at"] = d.get("last_config_at") or ""
     d["sub_fetches"] = int(d.get("sub_fetches") or 0)
+    d["created_by"] = d.get("created_by") or ""
+    d["extra_inbounds"] = [str(x) for x in db.json_raw(d.get("extra_inbounds"), [])]
+    d["config_count"] = max(1, min(10, int(d.get("config_count") or 2)))
     d["days_left"] = db.days_left(d.get("expires_at"))
     d["expired"] = db.is_expired(d.get("expires_at"))
     d["over_quota"] = bool(d.get("limit_bytes")) and d["used_bytes"] >= int(d["limit_bytes"])
@@ -356,6 +417,14 @@ def client_dict(row, request: Request, inbound=None) -> dict:
     d["inbound_protocol"] = ib.get("protocol", "")
     host = effective_host(request)
     ips = d["clean_ips"] or ib.get("clean_ips") or []
+    links, wg_conf = _client_links(d, request)
+    d["locations"] = [{"address": addr, "location": loc, "inbound": eib.get("name")}
+                      for eib, _uuid, addr, loc in _client_entries(d, request)]
+    if links:
+        d["links"] = links
+        d["link"] = links[0]
+        d["wg_conf"] = wg_conf
+        return d
     if ib and protocol.clean_protocol(ib.get("protocol")) == "wireguard":
         # WireGuard is not a URI: hand back a ready-to-use .conf block instead
         d["links"] = [protocol.wireguard_conf(ib, d["uuid"], host, d.get("name") or "")]
@@ -457,7 +526,8 @@ async def api_me_prefs(request: Request):
     prefs = db.get_prefs(current_user(request))
     prefs.update({k: v for k, v in (d or {}).items()
                  if k in ("language", "theme", "style", "font", "music", "music_volume", "music_track",
-                          "accent", "motion", "background", "bg_dim", "bg_blur", "bg_enabled")})
+                          "accent", "motion", "background", "bg_dim", "bg_blur", "bg_enabled",
+                          "sub_template")})
     db.set_prefs(current_user(request), prefs)
     return {"ok": True, "prefs": prefs}
 
@@ -693,6 +763,15 @@ async def api_activity(request: Request):
 
 
 # ---------------------------------------------------------------- inbounds
+@app.get("/api/subtemplates")
+async def api_subtemplates(request: Request):
+    if not authed(request):
+        return unauthorized()
+    mine = str((db.get_prefs(current_user(request)) or {}).get("sub_template") or "aurora")
+    return {"items": pages.TEMPLATE_LIST, "current": mine,
+            "preview_url": f"{base_url(request)}/info/{{token}}?template={{id}}"}
+
+
 @app.get("/api/protocols")
 async def api_protocols(request: Request):
     if not authed(request):
@@ -784,18 +863,20 @@ def _inbound_payload(d: dict, existing=None):
 async def api_list_inbounds(request: Request):
     if not authed(request):
         return unauthorized()
-    items = []
-    for row in db.list_inbounds():
-        d = inbound_dict(row)
-        d["client_count"] = len(db.clients_for_inbound(row["id"]))
-        d["sub_url"] = f"{base_url(request)}/sub/{row['sub_token']}"
-        self_cl = _inbound_as_client(row)
-        d["links"] = protocol.link_list(d, self_cl["uuid"], effective_host(request)) if self_cl["uuid"] else []
-        d["link"] = d["links"][0] if d["links"] else ""
-        items.append(d)
-    return {"items": items}
-
-
+    rows = db.list_inbounds()
+    remote = []
+    for ib in _node_inbounds():
+        ib = dict(ib)
+        ib["remote"] = True
+        ib["ref"] = f"node:{ib.get('node_id')}:{ib.get('id')}"
+        ib["address"] = ib.get("address") or ""
+        ib["used_human"] = protocol.fmt_bytes(int(ib.get("used_bytes") or 0))
+        ib["limit_human"] = protocol.fmt_bytes(int(ib.get("limit_bytes") or 0))
+        ib["client_count"] = int(ib.get("clients") or 0)
+        remote.append(ib)
+    return {"items": [inbound_dict(r) for r in rows], "remote": remote,
+            "nodes": [{"id": n["id"], "name": n["name"], "location": n["location"], "flag": n["flag"],
+                       "status": n["status"]} for n in db.list_nodes()]}
 @app.post("/api/inbounds")
 async def api_create_inbound(request: Request):
     if not authed(request):
@@ -921,15 +1002,19 @@ async def api_inbound_info(request: Request, iid: str):
 async def api_list_clients(request: Request):
     if not authed(request):
         return unauthorized()
-    rows = db.list_clients()
+    rows = _visible_clients(request)
     ids = {r["inbound_id"] for r in rows}
+    for r in rows:
+        for ref in db.json_raw(r.get("extra_inbounds"), []):
+            ref = str(ref)
+            if ref and not ref.startswith("node:"):
+                ids.add(ref)
     cache = {}
     for iid in ids:
-        r = db.inbound_row(iid)
-        cache[iid] = dict(r) if r else {}
-    return {"items": [client_dict(r, request, inbound=cache.get(r["inbound_id"], {})) for r in rows]}
-
-
+        rec = db.inbound_row(iid)
+        cache[iid] = dict(rec) if rec else {}
+    return {"items": [client_dict(r, request, inbound=cache.get(r["inbound_id"], {})) for r in rows],
+            "scope": "all" if is_owner(request) else "own"}
 @app.get("/api/inbounds/{iid}/clients")
 async def api_inbound_clients(request: Request, iid: str):
     if not authed(request):
@@ -937,9 +1022,8 @@ async def api_inbound_clients(request: Request, iid: str):
     row = db.inbound_row(iid)
     if not row:
         return JSONResponse({"error": "Inbound not found"}, status_code=404)
-    return {"items": [client_dict(c, request, inbound=dict(row)) for c in db.clients_for_inbound(iid)]}
-
-
+    items = [c for c in db.clients_for_inbound(iid) if _client_guard(request, c)]
+    return {"items": [client_dict(c, request, inbound=dict(row)) for c in items]}
 @app.post("/api/clients")
 async def api_create_client(request: Request):
     if not authed(request):
@@ -953,8 +1037,19 @@ async def api_create_client(request: Request):
     if row["client_limit"] and len(existing) >= int(row["client_limit"]):
         return JSONResponse({"error": "This inbound reached its client limit."}, status_code=409)
     name = str(d.get("name") or "Client").strip()[:80] or "Client"
+    extras = []
+    for ref in (d.get("extra_inbounds") or []):
+        ref = str(ref or "")
+        if not ref or ref == iid or ref in extras:
+            continue
+        extras.append(ref)
+        if len(extras) >= 2:            # primary + 2 = at most 3 locations per client
+            break
     cid = db.create_client(
         iid, name,
+        created_by=current_user(request),
+        extra_inbounds=extras,
+        config_count=max(1, min(10, as_int(d.get("config_count"), 2, 1, 10))),
         limit_bytes=int(as_float(d.get("limit_value")) * 1024 ** 3) if "limit_value" in d else as_int(d.get("limit_bytes"), 0, 0),
         expires_at=expiry(d.get("expires_days", 0), d.get("expires_at", "")),
         ip_limit=as_int(d.get("ip_limit"), 0, 0, 5000),
@@ -974,8 +1069,22 @@ async def api_update_client(request: Request, cid: str):
     row = db.client_row(cid)
     if not row:
         return JSONResponse({"error": "Client not found"}, status_code=404)
+    if not _client_guard(request, row):
+        return JSONResponse({"error": "That client belongs to another admin."}, status_code=403)
     d = await request.json()
     fields = {}
+    if "extra_inbounds" in d:
+        extras = []
+        for ref in (d.get("extra_inbounds") or []):
+            ref = str(ref or "")
+            if not ref or ref == row["inbound_id"] or ref in extras:
+                continue
+            extras.append(ref)
+            if len(extras) >= 2:
+                break
+        fields["extra_inbounds"] = extras
+    if "config_count" in d:
+        fields["config_count"] = max(1, min(10, as_int(d.get("config_count"), 2, 1, 10)))
     if "name" in d:
         fields["name"] = str(d["name"]).strip()[:80] or row["name"]
     if "limit_value" in d:
@@ -1003,21 +1112,25 @@ async def api_update_client(request: Request, cid: str):
 async def api_delete_client(request: Request, cid: str):
     if not authed(request):
         return unauthorized()
+    row = db.client_row(cid)
+    if not row:
+        return JSONResponse({"error": "Client not found"}, status_code=404)
+    if not _client_guard(request, row):
+        return JSONResponse({"error": "That client belongs to another admin."}, status_code=403)
     ok = db.delete_client(cid)
     db.log(current_user(request), "client-delete", cid)
     return {"ok": ok}
-
-
 @app.post("/api/clients/{cid}/regenerate")
 async def api_regenerate_client(request: Request, cid: str):
     if not authed(request):
         return unauthorized()
-    if not db.client_row(cid):
+    row = db.client_row(cid)
+    if not row:
         return JSONResponse({"error": "Client not found"}, status_code=404)
+    if not _client_guard(request, row):
+        return JSONResponse({"error": "That client belongs to another admin."}, status_code=403)
     db.regenerate_client(cid)
     return {"ok": True, "client": client_dict(db.client_row(cid), request)}
-
-
 @app.post("/api/clients/{cid}/reset-usage")
 async def api_reset_usage(request: Request, cid: str):
     if not authed(request):
@@ -1241,6 +1354,234 @@ async def api_delete_admin(request: Request, username: str):
     return {"ok": True, "items": db.list_admins()}
 
 
+# ---------------------------------------------------------------- nodes (panel to panel)
+# A node is another Dollax panel in a different location. The connecting panel reads that
+# panel's inbounds (with its shared node token) so subscriptions can carry several
+# locations, and those inbounds show up here tagged with the node's location/flag.
+def _node_base(url: str) -> str:
+    base = str(url or "").strip().rstrip("/")
+    if not base:
+        return ""
+    if not base.startswith(("http://", "https://")):
+        base = "https://" + base
+    return base
+
+
+def _node_export_payload(request: Request) -> dict:
+    """What another panel may read when it presents this panel's node token."""
+    inbounds = []
+    for row in db.list_inbounds():
+        ib = inbound_dict(row)
+        if protocol.clean_protocol(ib.get("protocol")) == "wireguard":
+            continue                      # .conf, not a URI entry
+        inbounds.append({
+            "id": ib["id"], "name": ib.get("name"), "protocol": ib.get("protocol"),
+            "network": ib.get("network"), "security": ib.get("security"),
+            "address": ib.get("address") or effective_host(request), "port": ib.get("port"),
+            "path": ib.get("path"), "host_header": ib.get("host_header"), "sni": ib.get("sni"),
+            "alpn": ib.get("alpn"), "fingerprint": ib.get("fingerprint"),
+            "grpc_service_name": ib.get("grpc_service_name"), "grpc_mode": ib.get("grpc_mode"),
+            "xhttp_mode": ib.get("xhttp_mode"), "header_type": ib.get("header_type"),
+            "flow": ib.get("flow"), "allow_insecure": ib.get("allow_insecure"),
+            "reality_public_key": ib.get("reality_public_key"),
+            "reality_short_id": ib.get("reality_short_id"),
+            "reality_spider_x": ib.get("reality_spider_x"),
+            "ss_method": ib.get("ss_method"), "ss_password": ib.get("ss_password"),
+            "uuid": ib.get("uuid"), "enabled": bool(ib.get("enabled")),
+            "clients": len(db.clients_for_inbound(ib["id"])),
+            "used_bytes": int(ib.get("used_bytes") or 0),
+            "limit_bytes": int(ib.get("limit_bytes") or 0),
+        })
+    return {
+        "ok": True,
+        "panel": {"name": db.setting("panel_name", "Dollax Panel"), "host": effective_host(request),
+                  "version": APP_VERSION},
+        "inbounds": inbounds,
+    }
+
+
+def _fetch_node_export(url: str, token: str, timeout: float = 10.0):
+    """GET <panel>/api/node/export?token=… → (payload | None, error)."""
+    base = _node_base(url)
+    if not base:
+        return None, "no url"
+    try:
+        import httpx
+        with httpx.Client(timeout=timeout, follow_redirects=True) as c:
+            r = c.get(base + "/api/node/export", params={"token": token})
+        if r.status_code == 403:
+            return None, "token rejected (HTTP 403)"
+        if r.status_code != 200:
+            return None, f"HTTP {r.status_code}"
+        data = r.json()
+        if not isinstance(data, dict) or "inbounds" not in data:
+            return None, "unexpected payload"
+        return data, ""
+    except Exception as exc:  # noqa: BLE001
+        return None, f"{exc.__class__.__name__}: {str(exc)[:120]}"
+
+
+def _refresh_node(nid: str) -> dict:
+    row = db.node_row(nid)
+    if not row:
+        return {"ok": False, "error": "Node not found"}
+    data, err = _fetch_node_export(row["url"], row["token"])
+    if not data:
+        db.set_node_snapshot(nid, f"error: {err}", [], "")
+        return {"ok": False, "error": err, "node": _node_view(db.node_row(nid))}
+    items = []
+    for ib in data.get("inbounds", []):
+        ib = dict(ib)
+        ib["node_id"] = nid
+        items.append(ib)
+    panel = data.get("panel") or {}
+    db.set_node_snapshot(nid, "ok", items, "")
+    if panel.get("name") and not row["name"]:
+        db.update_node(nid, {"name": panel["name"]})
+    return {"ok": True, "node": _node_view(db.node_row(nid)), "count": len(items)}
+
+
+def _node_view(row) -> dict:
+    if not row:
+        return {}
+    d = dict(row)
+    d["enabled"] = bool(d.get("enabled"))
+    d["inbounds"] = db.json_raw(d.get("snapshot"), [])
+    d["inbound_count"] = len(d["inbounds"])
+    d.pop("snapshot", None)
+    return d
+
+
+def _node_inbounds() -> list:
+    out = []
+    for row in db.list_nodes():
+        if not row["enabled"]:
+            continue
+        for ib in db.json_raw(row["snapshot"], []):
+            ib = dict(ib)
+            ib["node_id"] = row["id"]
+            ib["node_name"] = row["name"]
+            ib["location"] = row["location"]
+            ib["flag"] = row["flag"]
+            out.append(ib)
+    return out
+
+
+def _find_remote(ref: str):
+    """ref = 'node:<node_id>:<inbound_id>' → (node_row, inbound_dict) or (None, None)."""
+    parts = str(ref or "").split(":", 2)
+    if len(parts) != 3 or parts[0] != "node":
+        return None, None
+    node = db.node_row(parts[1])
+    if not node:
+        return None, None
+    for ib in db.json_raw(node["snapshot"], []):
+        if str(ib.get("id")) == parts[2]:
+            return node, dict(ib)
+    return node, None
+
+
+@app.get("/api/node/export")
+async def api_node_export(request: Request, token: str = ""):
+    """Read-only inbound catalogue for another panel (shared node token)."""
+    if not token or token != db.node_token():
+        return JSONResponse({"error": "Invalid node token."}, status_code=403)
+    return _node_export_payload(request)
+
+
+@app.get("/api/node/token")
+async def api_node_token(request: Request):
+    if not authed(request):
+        return unauthorized()
+    if not is_owner(request):
+        return JSONResponse({"error": "Owner only."}, status_code=403)
+    return {"token": db.node_token(), "host": effective_host(request)}
+
+
+@app.post("/api/node/token/rotate")
+async def api_node_token_rotate(request: Request):
+    if not authed(request):
+        return unauthorized()
+    if not is_owner(request):
+        return JSONResponse({"error": "Owner only."}, status_code=403)
+    db.set_setting("node_token", secrets.token_urlsafe(24))
+    db.log(current_user(request), "node-token-rotate", "", ip=client_ip(request))
+    return {"token": db.node_token()}
+
+
+@app.get("/api/nodes")
+async def api_list_nodes(request: Request):
+    if not authed(request):
+        return unauthorized()
+    items = [_node_view(r) for r in db.list_nodes()]
+    return {"items": items, "remote_inbounds": _node_inbounds(),
+            "token": db.node_token() if is_owner(request) else "",
+            "share": {"host": effective_host(request), "path": "/api/node/export"}}
+
+
+@app.post("/api/nodes")
+async def api_add_node(request: Request):
+    if not authed(request):
+        return unauthorized()
+    d = await request.json()
+    url = str(d.get("url") or "")
+    token = str(d.get("token") or "").strip()
+    if not _node_base(url):
+        return JSONResponse({"error": "Enter the other panel's address."}, status_code=400)
+    if not token:
+        return JSONResponse({"error": "Enter that panel's node token (Nodes → Node token)."}, status_code=400)
+    nid = db.add_node({"name": str(d.get("name") or "")[:60], "url": url, "token": token,
+                       "location": str(d.get("location") or "")[:60], "flag": str(d.get("flag") or "")[:8],
+                       "enabled": True, "created_by": current_user(request)})
+    # the fetch is blocking (httpx) - keep it off the event loop so the panel stays responsive
+    res = await asyncio.to_thread(_refresh_node, nid)
+    db.log(current_user(request), "node-add", f"{d.get('name') or url}", ip=client_ip(request))
+    if not res.get("ok"):
+        return {"ok": True, "id": nid, "node": res.get("node"), "warning": res.get("error"),
+                "items": [_node_view(r) for r in db.list_nodes()]}
+    return {"ok": True, "id": nid, "node": res["node"], "items": [_node_view(r) for r in db.list_nodes()]}
+
+
+@app.patch("/api/nodes/{nid}")
+async def api_update_node(request: Request, nid: str):
+    if not authed(request):
+        return unauthorized()
+    if not db.node_row(nid):
+        return JSONResponse({"error": "Node not found"}, status_code=404)
+    d = await request.json()
+    fields = {}
+    for k in ("name", "url", "token", "location", "flag"):
+        if k in d:
+            fields[k] = str(d[k] or "")[:300]
+    if "enabled" in d:
+        fields["enabled"] = as_bool(d.get("enabled"), True)
+    if fields.get("enabled") is True:
+        fields.pop("enabled")
+    db.update_node(nid, fields)
+    db.log(current_user(request), "node-update", nid, ip=client_ip(request))
+    return {"ok": True, "items": [_node_view(r) for r in db.list_nodes()]}
+
+
+@app.post("/api/nodes/{nid}/refresh")
+async def api_refresh_node(request: Request, nid: str):
+    if not authed(request):
+        return unauthorized()
+    if not db.node_row(nid):
+        return JSONResponse({"error": "Node not found"}, status_code=404)
+    res = await asyncio.to_thread(_refresh_node, nid)
+    return {"ok": bool(res.get("ok")), "error": res.get("error") or "",
+            "items": [_node_view(r) for r in db.list_nodes()], "remote_inbounds": _node_inbounds()}
+
+
+@app.delete("/api/nodes/{nid}")
+async def api_delete_node(request: Request, nid: str):
+    if not authed(request):
+        return unauthorized()
+    ok = db.delete_node(nid)
+    db.log(current_user(request), "node-delete", nid, ip=client_ip(request))
+    return {"ok": ok, "items": [_node_view(r) for r in db.list_nodes()]}
+
+
 # ---------------------------------------------------------------- subscriptions
 def _inbound_as_client(inbound_row) -> dict:
     """The inbound's own credential, used when no client exists (or alongside them)."""
@@ -1255,13 +1596,37 @@ def _inbound_as_client(inbound_row) -> dict:
     }
 
 
+def _client_sub_entries(cl: dict):
+    """Every location a client owns: its primary inbound + up to two more (max 3)."""
+    cl = dict(cl)
+    out = []
+    for ref in _client_inbound_refs(cl):
+        if ref.startswith("node:"):
+            node, remote = _find_remote(ref)
+            if not remote:
+                continue
+            ib = dict(remote)
+            ib["clean_ips"] = []
+            ib["_remote"] = True
+            ib["_location_label"] = (node["location"] if node else "") or (node["name"] if node else "")
+            csub = dict(cl)
+            csub["uuid"] = remote.get("uuid") or cl.get("uuid")
+            out.append((ib, csub))
+            continue
+        row = db.inbound_row(ref)
+        if not row:
+            continue
+        ib = dict(row)
+        ib["clean_ips"] = db.json_list(ib.get("clean_ips"))
+        out.append((ib, dict(cl)))
+    return out
+
+
 def _sub_entries(token: str):
     client = db.client_by_token(token)
     if client:
-        ib = db.inbound_row(client["inbound_id"])
-        if ib:
-            db.touch_client_config(client["id"])       # ledger: config handed out
-        return ([(dict(ib), dict(client))] if ib else []), f"client:{client['name']}"
+        db.touch_client_config(client["id"])           # ledger: config handed out
+        return _client_sub_entries(client), f"client:{client['name']}"
     inbound = db.inbound_by_token(token)
     if inbound:
         # the inbound itself is always a usable config - clients are optional extras
@@ -1279,8 +1644,10 @@ def _sub_lines(entries, host):
     for ib, cl in entries:
         if protocol.clean_protocol(ib.get("protocol")) == "wireguard":
             continue        # .conf text cannot live in a URI subscription
+        loc = ib.get("_location_label") or ""
+        remark = client_remark(cl) + (f" \u00b7 {loc}" if loc else "")
         lines += protocol.link_list(ib, cl["uuid"], host, cl.get("clean_ips") or ib.get("clean_ips"),
-                                    remark=client_remark(cl))
+                                    remark=remark, count=int(cl.get("config_count") or 2))
     return lines
 
 
@@ -1349,7 +1716,7 @@ async def subscription_stats(token: str, request: Request):
         "label": label,
         "userinfo": _userinfo_header(entries),
         "links": _sub_lines(entries, host),
-        "counts": {"configs": sum(max(1, int(ib.get("config_count") or 1)) for ib, _ in entries)},
+        "counts": {"configs": len(_sub_lines(entries, host)), "locations": len(entries)},
     }
 
 
@@ -1367,8 +1734,9 @@ def _qr_svg_markup(text: str) -> str:
 
 
 @app.get("/info/{token}", response_class=HTMLResponse)
-async def subscription_info(token: str, request: Request):
-    """The graphical, per-inbound subscription page (also used for client tokens)."""
+async def subscription_info(token: str, request: Request, template: str = ""):
+    """The graphical subscription page. `template` picks the design; each admin's choice
+    applies to the clients they created."""
     entries, label = _sub_entries(token)
     if not entries:
         return HTMLResponse("<h1 style='font-family:sans-serif'>Not found</h1>", status_code=404)
@@ -1443,14 +1811,46 @@ async def subscription_info(token: str, request: Request):
         "theme": prefs.get("theme") or "dark-green",
         "ui_style": prefs.get("style") or "solid",
     }
-    db.log("", "subpage-view", label or token)
-    return HTMLResponse(subscription_page(data))
+    tpl = (template or "").strip().lower()
+    if tpl not in pages.TEMPLATE_IDS:
+        creator = ""
+        for _ib, _cl in entries:
+            if str(_cl.get("created_by") or ""):
+                creator = str(_cl["created_by"])
+                break
+        tpl = ""
+        if creator:
+            tpl = str((db.get_prefs(creator) or {}).get("sub_template") or "")
+        if tpl not in pages.TEMPLATE_IDS:
+            tpl = str(prefs.get("sub_template") or "")
+        if tpl not in pages.TEMPLATE_IDS:
+            tpl = "aurora"
+    data["template"] = tpl
+    data["sub_url_tpl"] = f"{sub_url}?template={tpl}"
+    db.log("", "subpage-view", f"{label or token} [{tpl}]")
+    return HTMLResponse(subscription_page(data, template=tpl))
 
 
 # ---------------------------------------------------------------- xray-core
 # The panel is the single public port; Xray-core (bundled in the image) does the protocol
 # work for VMess / Shadowsocks / Reality / UDP and the extra transports (xhttp, gRPC,
 # HTTPUpgrade). Bytes still flow through the panel so quotas and per-client accounting work.
+def _visible_clients(request: Request) -> list:
+    """Clients an admin may see: their own, plus everything for the owner."""
+    rows = db.list_clients()
+    if is_owner(request):
+        return rows
+    me = current_user(request)
+    return [r for r in rows if str(r.get("created_by") or "") == me]
+
+
+def _client_guard(request: Request, row) -> bool:
+    """True when this admin may touch that client."""
+    if is_owner(request):
+        return True
+    return str(row["created_by"] or "") == current_user(request)
+
+
 def _xray_inbounds():
     return [dict(r) for r in db.list_inbounds()]
 
