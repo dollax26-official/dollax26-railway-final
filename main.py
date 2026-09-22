@@ -108,30 +108,50 @@ def _materialise_presets():
             print(f"[dollax] preset {name} could not be read: {exc}", flush=True)
 
 
+async def _xray_boot():
+    """Start the bundled core *after* the panel is already answering.
+
+    The core start is blocking (process spawn + a version probe), and on a platform that
+    probes an HTTP path to decide whether a deploy is alive, doing it before `yield` can
+    turn a slow core into "application failed to respond". So: answer first, connect later.
+    """
+    try:
+        res = await asyncio.to_thread(_xray_start_now)
+        if res and res.get("ok"):
+            print(f"[dollax] xray-core started: {len(res.get('port_map') or {})} inbound(s), "
+                  f"base port {xray_core.base_port()}", flush=True)
+        elif res and res.get("reason"):
+            print(f"[dollax] xray-core not running: {res['reason']}", flush=True)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[dollax] xray-core startup skipped: {exc.__class__.__name__}: {exc}", flush=True)
+
+
+def _xray_start_now():
+    inbounds = _xray_inbounds()
+    return xray_core.start(inbounds, _xray_clients(inbounds))
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     db.init_db()
-    _materialise_presets()
-    _xray_task = None
     try:
-        inbounds = _xray_inbounds()
-        res = xray_core.start(inbounds, _xray_clients(inbounds))
-        if res.get("ok"):
-            print(f"[dollax] xray-core started: {len(res.get('port_map') or {})} inbound(s), "
-                  f"base port {xray_core.base_port()}", flush=True)
-        elif xray_core.enabled() and res.get("reason"):
-            print(f"[dollax] xray-core not running: {res['reason']}", flush=True)
+        _materialise_presets()
     except Exception as exc:  # noqa: BLE001
-        print(f"[dollax] xray-core startup skipped: {exc}", flush=True)
+        print(f"[dollax] preset decode skipped: {exc}", flush=True)
+    tasks = []
     try:
-        _xray_task = asyncio.create_task(_xray_watch())
+        tasks.append(asyncio.create_task(_xray_boot()))     # never blocks the HTTP server
+        tasks.append(asyncio.create_task(_xray_watch()))
     except Exception:  # noqa: BLE001
-        _xray_task = None
+        pass
     try:
         yield
     finally:
-        if _xray_task:
-            _xray_task.cancel()
+        for t in tasks:
+            try:
+                t.cancel()
+            except Exception:  # noqa: BLE001
+                pass
 
 
 app = FastAPI(title="Dollax Panel", docs_url=None, redoc_url=None, lifespan=lifespan)
@@ -451,11 +471,17 @@ def entry_for(row, request: Request):
 # ---------------------------------------------------------------- pages
 @app.get("/health")
 async def health():
-    info = db.db_status()
+    """Cheap liveness probe: never raises, never touches the relay or the core."""
+    try:
+        info = db.db_status()
+    except Exception as exc:  # noqa: BLE001
+        info = {"path": "", "journal": "", "writable": False, "sqlite": "",
+                "error": f"{exc.__class__.__name__}: {exc}"}
     return {
         "ok": True, "service": "dollax-panel", "version": APP_VERSION,
-        "db": info["path"], "journal": info["journal"], "writable": info["writable"],
-        "sqlite": info["sqlite"],
+        "db": info.get("path", ""), "journal": info.get("journal", ""),
+        "writable": bool(info.get("writable")), "sqlite": info.get("sqlite", ""),
+        "core": "xray" if xray_core.is_running() else "internal-relay",
     }
 
 
