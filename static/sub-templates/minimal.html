@@ -43,6 +43,14 @@ body{margin:0;background:#f6f7f9;color:#111827;font-family:Inter,system-ui,sans-
 .sc-btn:hover{background:#111827;color:#fff}
 .mn-foot{text-align:center;color:#9ca3af;font-size:10px;margin:18px 0 4px}
 @media (max-width:600px){.mn-qr{width:104px;height:104px}}
+
+.sc-cfgname { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 11px; font-weight: 600; }
+.app-group { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 8px; }
+.app-group-k { font-size: 10px; opacity: .65; text-transform: uppercase; letter-spacing: .06em; min-width: 62px; }
+.app-chip { font-size: 11px; text-decoration: none; padding: 4px 9px; border-radius: 99px;
+  border: 1px solid currentColor; opacity: .82; }
+.app-chip:hover { opacity: 1; }
 </style>
 </head>
 <body>
@@ -73,6 +81,8 @@ body{margin:0;background:#f6f7f9;color:#111827;font-family:Inter,system-ui,sans-
   </div>
 
   $cards
+
+  <div class="sc-card"><div class="sc-head"><span class="sc-name">$l_apps</span></div>$apps</div>
 
   <p class="mn-foot">$l_footer · $panel</p>
 </div>
