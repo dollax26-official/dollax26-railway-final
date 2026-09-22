@@ -32,7 +32,8 @@ import time
 STATE = {
     "mode": (os.getenv("XRAY_MODE") or "auto").strip().lower(),
     "proc": None,
-    "port_map": {},        # inbound id -> local port
+    "port_map": {},        # inbound id -> local (bridged) port
+    "reality_ports": {},   # inbound id -> raw TCP port (Reality)
     "config_path": "",
     "last_sync": 0.0,
     "last_error": "",
@@ -77,12 +78,55 @@ def config_path() -> str:
 
 def build_config(inbounds, clients_by_inbound, base=None) -> dict:
     """One local ws inbound per panel inbound, plus freedom/block outbounds."""
+    import protocol
     base = base or base_port()
     port_map = {}
+    reality_ports = {}
     xs = []
     for i, ib in enumerate(inbounds):
         ib = dict(ib)
         proto = (ib.get("protocol") or "vless").lower()
+        # ---- Reality inbounds cannot be bridged through the HTTPS port (Railway/TLS would
+        # terminate the handshake), so they listen on their own raw TCP port. Expose that
+        # port with a Railway "TCP Proxy" and put the resulting domain:port in the inbound's
+        # address/port fields.
+        if (ib.get("security") or "").lower() == "reality":
+            rclients = clients_by_inbound.get(ib["id"], [])
+            # one raw port per Reality inbound (two inbounds must never share a listener)
+            rport = (int(os.getenv("XRAY_REALITY_PORT") or 0) or (base + 1000)) + len(reality_ports)
+            reality_ports[ib["id"]] = rport
+            rnet = (ib.get("network") or "tcp").lower()
+            rs = protocol.reality_settings(ib)
+            rstream = {"network": rnet, "security": "reality",
+                       "realitySettings": {"show": False, "dest": rs["dest"], "xver": 0,
+                                           "serverNames": rs["serverNames"],
+                                           "privateKey": rs["privateKey"],
+                                           "shortIds": rs["shortIds"]}}
+            if rnet == "ws":
+                rstream["wsSettings"] = {"path": ib.get("path") or f"/ws/{i}"}
+                if ib.get("host_header"):
+                    rstream["wsSettings"]["headers"] = {"Host": ib["host_header"]}
+            rentry = {"tag": f"reality{i}", "listen": "0.0.0.0", "port": rport,
+                      "streamSettings": rstream,
+                      "sniffing": {"enabled": True, "destOverride": ["http", "tls", "quic"]}}
+            if proto == "vless":
+                rentry["protocol"] = "vless"
+                rentry["settings"] = {"decryption": "none",
+                                      "clients": [{"id": c["uuid"], "email": c.get("name") or c["id"],
+                                                   "flow": rs["flow"] or ""} for c in rclients] or
+                                                 ([{"id": ib["uuid"], "email": "inbound", "flow": rs["flow"] or ""}]
+                                                  if ib.get("uuid") else [])}
+            elif proto == "trojan":
+                rentry["protocol"] = "trojan"
+                rentry["settings"] = {"clients": [{"password": c["uuid"], "email": c.get("name") or c["id"],
+                                                   "flow": rs["flow"] or ""} for c in rclients] or
+                                                 ([{"password": ib["uuid"], "email": "inbound",
+                                                    "flow": rs["flow"] or ""}] if ib.get("uuid") else [])}
+            else:
+                rentry["protocol"] = proto
+                rentry["settings"] = {"clients": []}
+            xs.append(rentry)
+            continue
         if proto == "wireguard":
             # WireGuard needs a TUN device + NET_ADMIN, which a Railway container does not
             # give us: the panel generates the peer configs, but WG itself must run elsewhere.
@@ -139,6 +183,7 @@ def build_config(inbounds, clients_by_inbound, base=None) -> dict:
                                  "password": ib.get("ss_password") or ib.get("uuid") or "dollax",
                                  "network": "tcp,udp"}
         xs.append(entry)
+    STATE["reality_ports"] = reality_ports
     cfg = {
         "log": {"loglevel": os.getenv("XRAY_LOGLEVEL") or "warning"},
         "inbounds": xs,
@@ -218,7 +263,8 @@ def status() -> dict:
     return {
         "mode": STATE["mode"], "installed": available(), "running": is_running(),
         "version": STATE["version"], "base_port": base_port(),
-        "inbounds": len(STATE["port_map"]), "config": config_path(),
+        "inbounds": len(STATE["port_map"]), "reality": STATE.get("reality_ports", {}),
+        "config": config_path(),
         "last_sync": STATE["last_sync"], "last_error": STATE["last_error"],
     }
 
