@@ -79,6 +79,74 @@ async function clientAction(act, id) {
   }
 }
 
+/* ------------------------------------------------------------------ TL robot */
+async function pageBot(view) {
+  const st = S.bot || {};
+  view.innerHTML = `
+    <div class="card">
+      <div class="card-head"><h2>${T('nav_bot')}</h2></div>
+      <p class="muted" style="font-size:10.5px;margin-bottom:11px">${T('botNote')}</p>
+      <div class="form-grid">
+        <label class="field span-2"><span>${T('botToken')}</span>
+          <input id="botToken" value="${esc(st.token_set ? '••••••••••••' : '')}" placeholder="123456:ABC-DEF…"></label>
+        <label class="field"><span>${T('botOwner')}</span>
+          <input id="botOwner" value="${esc(st.owner || '')}" placeholder="123456789"></label>
+      </div>
+      <div class="toolbar" style="margin-top:12px">
+        <button class="btn primary" id="botSave">${T('botSaveStart')}</button>
+        <button class="btn sm" id="botTest">${T('botTest')}</button>
+        <button class="btn sm" id="botStart2">${T('botStartNow')}</button>
+        <button class="btn sm danger" id="botStop2">${T('botStop')}</button>
+      </div>
+      <p class="muted" style="font-size:10px;margin-top:9px">${T('botHowto')}</p>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>${T('botStatus')}</h2>
+        <span class="badge ${st.running ? 'ok' : st.configured ? 'warn' : ''}">${st.running ? T('botRunning') : T('botStopped')}</span></div>
+      <div class="diag-row"><span class="muted">${T('botUsername')}</span><code class="mono">${esc(st.username || '—')}</code></div>
+      <div class="diag-row"><span class="muted">${T('botOwner')}</span><code class="mono">${esc(st.owner || '—')}</code></div>
+      <div class="diag-row"><span class="muted">${T('botHandled')}</span><code class="mono">${esc(String(st.handled || 0))}</code></div>
+      <div class="diag-row"><span class="muted">${T('botLastError')}</span><code class="mono">${esc(st.last_error || '—')}</code></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>${T('botCommands')}</h2></div>
+      <div class="live-preview"><code id="botCmdList">${esc(st.commands || '')}</code></div>
+    </div>`;
+
+  const reload = async () => {
+    S.bot = await api('GET', '/api/bot');
+    goto('bot');
+  };
+  if ($('botSave')) $('botSave').onclick = async () => {
+    const btn = $('botSave');
+    btn.disabled = true;
+    try {
+      const payload = { tg_owner_id: $('botOwner').value };
+      const tok = $('botToken').value;
+      if (tok && tok.indexOf('•') === -1) payload.tg_token = tok;
+      const r = await api('POST', '/api/bot', payload);
+      toast(r.started ? T('botRunning') : (r.hint || T('saved')), r.started ? 'ok' : 'bad');
+      await reload();
+    } catch (e) { toast(e.message, 'bad'); btn.disabled = false; }
+  };
+  if ($('botTest')) $('botTest').onclick = async () => {
+    try {
+      const r = await api('POST', '/api/bot/test');
+      toast(r.ok ? T('saved') : (r.error || T('failed')), r.ok ? 'ok' : 'bad');
+    } catch (e) { toast(e.message, 'bad'); }
+  };
+  if ($('botStart2')) $('botStart2').onclick = async () => {
+    try { const r = await api('POST', '/api/bot/start'); toast(r.started ? T('botRunning') : T('failed'), r.started ? 'ok' : 'bad'); await reload(); }
+    catch (e) { toast(e.message, 'bad'); }
+  };
+  if ($('botStop2')) $('botStop2').onclick = async () => {
+    try { await api('POST', '/api/bot/stop'); toast(T('botStopped'), 'ok'); await reload(); }
+    catch (e) { toast(e.message, 'bad'); }
+  };
+}
+
 /* ------------------------------------------------------------------ edit client */
 async function openEditClient(c) {
   let linked = [];
