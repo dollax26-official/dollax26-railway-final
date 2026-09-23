@@ -358,3 +358,5 @@ html[data-bg="on"] .tblwrap{backdrop-filter:blur(10px)}
 .tpl-actions { display: flex; gap: 6px; margin-top: 2px; }
 .node-flag { font-size: 13px; }
 @media (max-width: 640px) { .tpl-grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); } }
+.tpl-pasarguard { background: linear-gradient(135deg, #2A1418, #0F1116 70%); color: #FFB4B4; }
+.tpl-xg { background: linear-gradient(135deg, #2563EB, #0B1120 75%); }
