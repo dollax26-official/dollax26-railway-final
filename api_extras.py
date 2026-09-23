@@ -505,3 +505,22 @@ async def api_bot_start(request: Request):
     return {"ok": True, "started": started, "status": m.tg_bot.status()}
 
 
+# ---------------------------------------------------------------- subscription rows
+def links_all(entries, host, request) -> list:
+    """Every real config of this page as a row: name + link (+ a QR for the first few)."""
+    out = []
+    for ib, cl in entries:
+        if m.protocol.clean_protocol(ib.get("protocol")) == "wireguard":
+            continue
+        remark = m.client_remark(cl) if not cl.get("is_inbound") else ""
+        links = m.protocol.link_list(m.link_inbound(ib, request), cl["uuid"], host,
+                                   cl.get("clean_ips") or ib.get("clean_ips"),
+                                   remark=remark, count=int(cl.get("config_count") or 2))
+        for link in links:
+            if len(out) >= 40:
+                break
+            item = {"link": link, "name": m.protocol.config_name(link), "protocol": ib.get("protocol") or "cfg"}
+            if len(out) < 4:
+                item["qr"] = m._qr_svg_markup(link)
+            out.append(item)
+    return out
