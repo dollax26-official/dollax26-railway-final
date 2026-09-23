@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="$lang" dir="$dir" data-theme="$theme" data-style="$style">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>$panel — $title</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;600;700;800&family=Inter:wght@400;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#0F1116;color:#fff;font-family:Vazirmatn,Inter,system-ui,sans-serif}
+.pg{max-width:900px;margin:0 auto;padding:18px 14px 40px}
+/* header */
+.pg-head{display:flex;align-items:center;gap:9px;margin-bottom:16px;flex-wrap:wrap}
+.pg-dot{width:8px;height:8px;border-radius:50%;background:#22C55E;flex:0 0 auto}
+.pg-meta{color:#8A8F99;font-size:12px}
+.pg-name{color:#fff;font-size:13px;font-weight:600}
+.pg-spacer{flex:1 1 auto}
+.pg-icon{width:34px;height:34px;border-radius:50%;border:1px solid #2A2E36;background:transparent;color:#8A8F99;
+  display:grid;place-items:center;font-size:14px;cursor:pointer}
+.pg-icon:hover{color:#fff;border-color:#3a3f48}
+/* grid */
+.pg-grid{display:grid;grid-template-columns:1.35fr 1fr;gap:14px}
+@media (max-width:720px){.pg-grid{grid-template-columns:1fr}}
+.card{background:#171A20;border:1px solid #24272E;border-radius:16px;padding:20px}
+.card.danger{background:#2A1418;border-color:#3D1E24}
+.card h2{font-size:16px;font-weight:700;margin:0 0 14px}
+.card .k{color:#6B7280;font-size:12px}
+.card .v{font-size:13px}
+/* status ring card */
+.st-top{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
+.st-limit{color:#EF3B3B;font-weight:700;font-size:17px}
+.ring{width:132px;height:132px;border-radius:50%;flex:0 0 auto;display:grid;place-items:center;
+  background:conic-gradient(#EF3B3B $pct%, #4A1F26 0);margin:10px auto 0}
+.ring>div{width:104px;height:104px;border-radius:50%;background:#2A1418;display:grid;place-items:center;
+  text-align:center;line-height:1.25}
+.ring .pct{font-size:20px;font-weight:800}
+.ring .lbl{color:#8A8F99;font-size:11px}
+.st-rows{display:grid;gap:8px;margin-top:14px}
+.st-row{display:flex;justify-content:space-between;gap:10px;align-items:center;background:#12141A;
+  border:1px solid #24272E;border-radius:10px;padding:10px 12px}
+.st-row .k{color:#8A8F99;font-size:12px}
+.st-row .v{font-size:13px;font-weight:600}
+.stack{display:grid;gap:10px}
+.mini{background:#171A20;border:1px solid #24272E;border-radius:14px;padding:16px 18px}
+.mini .k{color:#8A8F99;font-size:12px;margin-bottom:4px}
+.mini .v{font-size:15px;font-weight:700}
+.mini .v.green{color:#22C55E}
+/* usage chips */
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+.chip{background:#1C1F26;border:1px solid #2A2E36;color:#8A8F99;border-radius:999px;padding:7px 14px;font-size:12px;
+  cursor:pointer;transition:.15s}
+.chip:hover{color:#fff;border-color:#3a4048}
+.chip.on{background:#2F6FED;border-color:#2F6FED;color:#fff}
+/* config rows */
+.rows{display:grid;gap:10px}
+.sc-row{display:flex;gap:10px;align-items:center;background:#12141A;border:1px solid #24272E;border-radius:10px;
+  padding:11px 13px;min-height:48px}
+.sc-badge{background:#2563EB;color:#fff;border-radius:6px;padding:3px 8px;font-size:11px;font-weight:700;
+  letter-spacing:.04em;text-transform:uppercase;flex:0 0 auto}
+.sc-cfgname{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px}
+.sc-btn{background:#1F232B;border:1px solid #2A2E36;color:#C7CCD4;border-radius:9px;padding:7px 12px;font-size:12px;
+  cursor:pointer;transition:.15s}
+.sc-btn:hover{background:#2F6FED;border-color:#2F6FED;color:#fff}
+.copy-all{display:inline-flex;align-items:center;gap:8px;background:#2F6FED;color:#fff;border:0;border-radius:10px;
+  padding:9px 16px;font-size:13px;font-weight:600;cursor:pointer}
+.copy-all:hover{background:#2560d8}
+details.qr summary{list-style:none;cursor:pointer;background:#1F232B;border:1px solid #2A2E36;border-radius:9px;
+  padding:7px 11px;font-size:12px;color:#C7CCD4}
+details.qr summary:hover{background:#2F6FED;color:#fff;border-color:#2F6FED}
+.qrbox{background:#fff;border-radius:10px;padding:8px;width:150px;height:150px;margin-top:8px}
+/* apps */
+.app-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+.app-tile{display:flex;gap:10px;align-items:center;background:#12141A;border:1px solid #24272E;border-radius:12px;
+  padding:12px;text-decoration:none;color:#fff}
+.app-tile:hover{border-color:#2F6FED}
+.app-group{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:8px}
+.app-group-k{color:#8A8F99;font-size:11px;min-width:64px}
+.app-chip{font-size:12px;color:#BFD4FF;text-decoration:none;border:1px solid #2F6FED;border-radius:999px;padding:6px 11px}
+.app-chip:hover{background:#2F6FED;color:#fff}
+.app-ic{width:32px;height:32px;border-radius:8px;background:#2F6FED;display:grid;place-items:center;font-size:15px}
+.app-t{font-size:13px;font-weight:600}
+.app-s{color:#8A8F99;font-size:11px;text-transform:uppercase}
+.foot{text-align:center;color:#6B7280;font-size:11px;margin-top:18px}
+.info-card{border-style:dashed;opacity:.92}
+</style>
+</head>
+<body>
+<div class="pg">
+  <div class="pg-head">
+    <span class="pg-dot"></span>
+    <span class="pg-meta">$l_connected</span>
+    <span class="pg-name">$title</span>
+    <span class="pg-spacer"></span>
+    <span class="pg-icon" title="$l_used">◐</span>
+  </div>
+
+  <div class="pg-grid">
+    <div class="card danger">
+      <div class="st-top">
+        <span class="k">$l_used</span>
+        <span class="st-limit">$l_status</span>
+      </div>
+      <div class="ring"><div><div class="pct">$pct%</div><div class="lbl">$l_used</div></div></div>
+      <div class="st-rows">
+        <div class="st-row"><span class="k">$l_remaining</span><span class="v green">$remaining</span></div>
+        <div class="st-row"><span class="k">$l_used_label</span><span class="v">$used</span></div>
+      </div>
+    </div>
+
+    <div class="stack">
+      <div class="mini"><div class="k">$l_total</div><div class="v">$used</div></div>
+      <div class="mini"><div class="k">$l_expires_at</div><div class="v">$expires</div></div>
+      <div class="mini"><div class="k">$l_last_conn</div><div class="v">$clients $l_clients</div></div>
+    </div>
+  </div>
+
+  <div class="pg-grid" style="margin-top:14px">
+    <div class="card">
+      <div class="st-top" style="margin-bottom:12px">
+        <h2 style="margin:0">$l_links</h2>
+        <button class="copy-all" type="button" data-copy="$sub_url">$l_copy_all</button>
+      </div>
+      <div class="rows">$rows</div>
+    </div>
+    <div class="card">
+      <h2>$l_used_label</h2>
+      <div class="v" style="font-size:22px;font-weight:800">$used</div>
+      <div class="chips">
+        <span class="chip" data-copy="$sub_clash">$l_clash</span>
+        <span class="chip" data-copy="$sub_singbox">$l_singbox</span>
+        <span class="chip on" data-copy="$sub_url">$l_link</span>
+      </div>
+      <div class="k" style="margin-top:12px">$endpoint</div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:14px">
+    <h2>$l_apps_android</h2>
+    <div class="app-grid">$apps</div>
+  </div>
+
+  $info
+  <p class="foot">$l_footer · $panel</p>
+</div>
+<script>
+(function () {
+  function fallback(text) {
+    var ta = document.createElement('textarea');
+    ta.value = text; ta.style.position = 'fixed'; ta.style.top = '-1000px';
+    document.body.appendChild(ta); ta.select(); ta.setSelectionRange(0, text.length);
+    var ok = false; try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+    document.body.removeChild(ta); return ok;
+  }
+  document.addEventListener('click', function (e) {
+    var chip = e.target.closest('.chip');
+    if (chip) {
+      document.querySelectorAll('.chip').forEach(function (c) { c.classList.remove('on'); });
+      chip.classList.add('on');
+    }
+    var b = e.target.closest('[data-copy]');
+    if (!b) return;
+    e.preventDefault();
+    var txt = b.getAttribute('data-copy') || '';
+    var done = function () { var o = b.textContent; b.textContent = '$l_copied';
+      setTimeout(function () { b.textContent = o; }, 1200); };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(txt).then(done, function () { if (fallback(txt)) done(); });
+    } else if (fallback(txt)) { done(); }
+  });
+})();
+</script>
+</body>
+</html>
