@@ -38,6 +38,7 @@ import api_extras
 import db
 import protocol
 import relay
+import tg_bot
 import xray_core
 import pages
 from pages import dashboard_html, login_html, subscription_page
@@ -141,6 +142,9 @@ async def lifespan(app: FastAPI):
         print(f"[dollax] preset decode skipped: {exc}", flush=True)
     tasks = []
     try:
+        tg_bot.register(sys.modules[__name__])
+        if tg_bot.start():                                  # TL robot (only when configured)
+            print("[dollax] TL robot started (telegram control bot)", flush=True)
         tasks.append(asyncio.create_task(_xray_boot()))     # never blocks the HTTP server
         tasks.append(asyncio.create_task(_xray_watch()))
     except Exception:  # noqa: BLE001
@@ -148,6 +152,10 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        try:
+            tg_bot.stop()
+        except Exception:  # noqa: BLE001
+            pass
         for t in tasks:
             try:
                 t.cancel()
@@ -1365,10 +1373,17 @@ async def api_set_settings(request: Request):
         return JSONResponse({"error": "Only the owner can change panel settings."}, status_code=403)
     d = await request.json()
     allowed = ("panel_name", "public_base_url", "default_port", "xray_bridge_host", "xray_bridge_port",
-               "reality_host", "reality_public_port")
+               "reality_host", "reality_public_port", "tg_token", "tg_owner_id")
     for key in allowed:
         if key in d:
             db.set_setting(key, str(d[key])[:200].strip())
+    if "tg_token" in d or "tg_owner_id" in d:
+        try:                                    # save -> the bot (re)starts itself
+            tg_bot.register(sys.modules[__name__])
+            tg_bot.start()
+            print("[dollax] TL robot restarted after a settings change", flush=True)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[dollax] TL robot could not start: {exc.__class__.__name__}: {exc}", flush=True)
     db.log(current_user(request), "settings-update",
            ",".join(k for k in d if k in allowed),
            ip=client_ip(request))
