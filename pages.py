@@ -262,6 +262,24 @@ def info_block(t, esc, data) -> str:
             t("copy") + '</button></div></div>')
 
 
+
+def rows_html(t, esc, links) -> str:
+    """Every config as a row: badge, name, Copy, and a QR toggle when we have one."""
+    out = []
+    for i, item in enumerate(links or [], 1):
+        link = item.get("link") or ""
+        name = item.get("name") or config_name(link)
+        badge = "SUB" if i == 1 else (item.get("protocol") or "CFG").upper()[:8]
+        qr = item.get("qr") or ""
+        qr_html = ('<details class="qr"><summary>QR</summary><div class="qrbox">' + qr + '</div></details>'
+                   if qr else "")
+        out.append('<div class="sc-row"><span class="sc-badge">' + esc(badge) + '</span>'
+                   '<span class="sc-cfgname" title="' + esc(link, quote=True) + '">' + esc(name) + '</span>'
+                   '<button class="sc-btn" type="button" data-copy="' + esc(link, quote=True) + '">' +
+                   t("copy") + '</button>' + qr_html + '</div>')
+    return "".join(out) or '<p class="sc-meta">' + t("noClients") + '</p>'
+
+
 # ---------------------------------------------------------------- template registry
 # Designs live as plain HTML files in static/sub-templates/ (edit them freely).
 # Placeholders use string.Template syntax: $panel, $title, $endpoint, $protocol,
@@ -278,6 +296,8 @@ TEMPLATE_LIST = [
     {"id": "terminal", "name": "Terminal", "hint": "Monospace console look, green on black."},
     {"id": "minimal", "name": "Minimal", "hint": "White, quiet, typography first."},
     {"id": "bento", "name": "Bento", "hint": "Modular stat tiles in a 12-column grid."},
+    {"id": "pasarguard", "name": "Pasarguard", "hint": "Maroon status ring, usage chips and a host of app tiles."},
+    {"id": "xg", "name": "x4g style", "hint": "Blue gradient banner, stat cards and progress bars (panel branding)."},
 ]
 TEMPLATE_IDS = [t["id"] for t in TEMPLATE_LIST]
 DASH, INF = chr(8212), chr(8734)
@@ -298,7 +318,12 @@ def _label_map(t) -> dict:
         "l_copied": t("copied"), "l_sub": t("genericSub"), "l_clash": t("clashSub"),
         "l_singbox": t("singboxSub"), "l_clients": t("clients"), "l_configs": t("configNodes"),
         "l_none": t("noClients"), "l_footer": t("subFooter"),
-        "l_apps": t("appsTitle"),
+        "l_apps": t("appsTitle"), "l_subinfo": t("subinfo"), "l_account": t("account"),
+        "l_user": t("user"), "l_status": t("status"), "l_active": t("active"),
+        "l_links": t("links"), "l_copy_all": t("copyAll"), "l_total": t("total"),
+        "l_used_label": t("usedLabel"), "l_expires_at": t("expiresAt"), "l_last_conn": t("lastConn"),
+        "l_connected": t("connected"), "l_group": t("group"), "l_configs": t("configsLabel"),
+        "l_apps_android": t("appsAndroid"), "l_link": t("link"), "l_theme": t("theme"),
     }
 
 
@@ -386,17 +411,22 @@ def subscription_page(data, template="aurora"):
         "style": esc(str(data.get("ui_style") or "solid")),
         "qr": data.get("qr_svg") or "",
     }
+    rows = rows_html(t, esc, data.get("links_all") or [])
     if tid == "bento":
         tags = _tags_html(t, esc, data, "bn-tile", "bn-k", "bn-v")
         cards = _cards_html(t, esc, clients, "bn-tile", wide=True)
     elif tid == "terminal":
         tags = ""
         cards = _cards_html(t, esc, clients, "tm-box")
+    elif tid == "xg":
+        tags = _tags_html(t, esc, data, "xg-stat", "k", "v")
+        cards = ""
     else:
         tags = _tags_html(t, esc, data)
         cards = _cards_html(t, esc, clients)
     return Template(raw).safe_substitute({**shared, **_label_map(t), "tags": tags, "cards": cards,
-                                           "apps": apps_html(t, esc), "info": info_block(t, esc, data)})
+                                           "apps": apps_html(t, esc), "info": info_block(t, esc, data),
+                                           "rows": rows})
 
 
 
@@ -411,7 +441,12 @@ _FA = {
     "used": "مصرف", "remaining": "باقیمانده", "expires": "انقضا", "upload": "آپلود", "download": "دانلود",
     "protocol": "پروتکل", "clients": "کاربران", "configNodes": "تعداد کانفیگ",
     "noClients": "کاربری وجود ندارد", "subEmptyHint": "از پنل یک کاربر به این اینباند اضافه کنید.",
-    "appsTitle": "برنامه‌هایی که این ساب‌سکریپشن را می‌پذیرند",
+    "appsTitle": "برنامه‌هایی که این ساب‌سکریپشن را می‌پذیرند", "apps": "برنامه‌های پشتیبان",
+    "subinfo": "اطلاعات اشتراک", "account": "اطلاعات حساب", "user": "کاربر",
+    "status": "وضعیت", "active": "فعال", "links": "لینک‌های اشتراک", "copyAll": "کپی همه کانفیگ‌ها",
+    "total": "حجم کل", "usedLabel": "مصرف", "expiresAt": "تاریخ انقضا",
+    "lastConn": "آخرین اتصال", "connected": "اتصال", "group": "گروه اشتراک",
+    "configsLabel": "کانفیگ‌ها", "appsAndroid": "اندروید", "link": "لینک", "theme": "پوسته",
     "infoTitle": "اطلاعات حساب", "infoBadge": "سرور نیست",
     "infoNote": "این ورودی فقط وضعیت حساب را نشان می‌دهد (ترافیک، مصرف، روز باقی‌مانده) و هرگز وصل نمی‌شود؛ به همین دلیل از کانفیگ‌های اصلی جدا شده است.",
     "appsMobile": "موبایل", "appsDesktop": "کامپیوتر / لپ‌تاپ",
@@ -427,7 +462,12 @@ _EN = {
     "used": "Used", "remaining": "Remaining", "expires": "Expires", "upload": "Upload", "download": "Download",
     "protocol": "Protocol", "clients": "Clients", "configNodes": "Configs",
     "noClients": "No clients", "subEmptyHint": "Add a client to this inbound from the panel.",
-    "appsTitle": "Apps that accept this subscription",
+    "appsTitle": "Apps that accept this subscription", "apps": "Apps that accept this subscription",
+    "subinfo": "Subscription Information", "account": "Account data", "user": "User",
+    "status": "Status", "active": "ACTIVE", "links": "Subscription Links", "copyAll": "Copy all links",
+    "total": "Total volume", "usedLabel": "Used", "expiresAt": "Expiration date",
+    "lastConn": "Last connection", "connected": "Connection", "group": "Subscription group",
+    "configsLabel": "Configs", "appsAndroid": "Android", "link": "Link", "theme": "Theme",
     "infoTitle": "Account info", "infoBadge": "not a server",
     "infoNote": "This entry only reports your account state (traffic, usage, days). It never connects, so it is kept separate from your working configs.",
     "appsMobile": "Mobile", "appsDesktop": "PC / laptop",
