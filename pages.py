@@ -292,10 +292,6 @@ TEMPLATE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static"
 TEMPLATE_LIST = [
     {"id": "xui", "name": "X-UI / 3x-ui", "hint": "The familiar x-ui layout - dark header, big counters, per-config rows."},
     {"id": "aurora", "name": "Aurora", "hint": "Gradient hero with a usage donut, QR tile and config cards."},
-    {"id": "neon", "name": "Neon Glass", "hint": "Glassy hero, glowing usage ring, neon accents."},
-    {"id": "terminal", "name": "Terminal", "hint": "Monospace console look, green on black."},
-    {"id": "minimal", "name": "Minimal", "hint": "White, quiet, typography first."},
-    {"id": "bento", "name": "Bento", "hint": "Modular stat tiles in a 12-column grid."},
     {"id": "pasarguard", "name": "Pasarguard", "hint": "Maroon status ring, usage chips and a host of app tiles."},
     {"id": "xg", "name": "x4g style", "hint": "Blue gradient banner, stat cards and progress bars (panel branding)."},
 ]
