@@ -519,7 +519,7 @@ def links_all(entries, host, request) -> list:
         for link in links:
             if len(out) >= 40:
                 break
-            item = {"link": link, "name": m.protocol.config_name(link), "protocol": ib.get("protocol") or "cfg"}
+            item = {"link": link, "name": m.pages.config_name(link), "protocol": ib.get("protocol") or "cfg"}
             if len(out) < 4:
                 item["qr"] = m._qr_svg_markup(link)
             out.append(item)
