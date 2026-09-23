@@ -74,7 +74,14 @@ const I18N = {
     optional: 'optional',
     enabled: 'Enabled',
     confirmDelete: 'Delete this?',
-    nav_nodes: 'Nodes', nav_hosts: 'Hosts',
+    nav_nodes: 'Nodes', nav_hosts: 'Hosts', nav_bot: 'TL robot',
+    botNote: 'Control this panel from Telegram: create clients and inbounds, manage hosts, read the log.',
+    botToken: 'Bot token', botOwner: 'Owner number id', botSaveStart: 'Save & start bot',
+    botStatus: 'Bot status', botRunning: 'running', botStopped: 'stopped',
+    botTest: 'Send test message', botStop: 'Stop bot', botStartNow: 'Start bot',
+    botHandled: 'commands handled', botLastError: 'last error', botUsername: 'bot username',
+    botHowto: 'Create a bot with @BotFather, paste its token here, put your numeric Telegram id in Owner number id, then press Save - the bot starts by itself. Send /help to the bot for the command list.',
+    botCommands: 'Commands',
     hostsNote: 'The addresses your VLESS configs should hand out (like x-ui hosts). Pick any of them per inbound and every generated config rotates over exactly those addresses.',
     addHost: 'Add host(s)', hostAddress: 'Address / host',
     hostsPlaceholder: 'de1.example.com\n104.18.149.200',
@@ -165,7 +172,7 @@ const I18N = {
     bgBlur: 'محو', uploadBg: 'آپلود تصویر', removeBg: 'حذف پس‌زمینه‌ی من',
     bgPerUser: 'پس‌زمینه‌ی شما فقط در حساب خودتان دیده می‌شود.',
     bgEnabled: 'استفاده از پس‌زمینه', saveAppearance: 'ذخیره‌ی ظاهر', resetAppearance: 'بازنشانی',
-    fontFamily: 'فونت', bgUploaded: 'پس‌زمینه ذخیره شد', bgRemoved: 'پس‌زمینه حذف شد', usePanelDomain: 'دامنه‌ی پنل', exportLedger: 'خروجی لجند (CSV)', lastGenerated: 'آخرین زمان ساخت کانفیگ', fetches: 'دریافت سابسکریپشن', xrayCore: 'هستهٔ Xray', addMusic: 'افزودن موسیقی', musicPerUser: 'در حساب شما ذخیره می‌شود؛ دفعه بعد آپلود لازم نیست.', defaultMusic: 'آهنگ پیش‌فرض پنل', noMusic: 'هنوز آهنگی نیست', useMusic: 'استفاده از این آهنگ', musicAdded: 'موسیقی ذخیره شد', musicRemoved: 'آهنگ حذف شد', readFailed: 'خواندن فایل ممکن نشد', unsavedChanges: 'تغییرات ذخیره‌نشده', restartCore: 'راه‌اندازی مجدد هسته', refresh: 'بازخوانی', failed: 'ناموفق', xrayCore: 'هستهٔ Xray', xrayNote: 'هستهٔ Xray داخل ایمیج داکر است و با تغییر اینباندها خودکار ریستارت می‌شود.', wgPublicKey: 'کلید عمومی سرور WG', wgAddress: 'آدرس peer در WG', wgNote: 'کانفیگ‌های WireGuard برای سرور WG شما ساخته می‌شوند؛ Railway فقط TCP می‌دهد.', udpNote: 'پروتکل QUIC/UDP: کانفیگ‌ها ساخته می‌شوند اما Railway فقط TCP را باز می‌کند.', proxyNote: 'لینک‌های پروکسی SOCKS5/HTTP برای هر کلاینت ساخته می‌شوند.', realityNote: 'پروتکل Reality به یک پورت TCP خام نیاز دارد (از پورت HTTPS عبور نمی‌کند). در Railway یک TCP Proxy به پورتی که در تنظیمات → هستهٔ Xray نشان داده می‌شود (پیش‌فرض 8443) بسازید و همان دامنه و پورت را در Address/Port وارد کنید. کلید و short id خودکار ساخته می‌شوند.', realityPorts: 'پورت‌های TCP رلیتی', nothingToCopy: 'چیزی برای کپی نیست', copyFailed: 'مرورگر اجازهٔ کپی نداد؛ دستی انتخاب و کپی کنید', edit: 'ویرایش', editClient: 'ویرایش کاربر', expiresAt: 'انقضای دقیق (تاریخ و ساعت)', subLinks: 'ساب‌لینک‌ها', linkThisSub: 'افزودن ساب‌لینک', noSubLinks: 'ساب‌لینک متصل نیست', linkedSubs: 'متصل', noOtherClients: 'کاربر دیگری نیست', created: 'ساخته شده', subLinksNote: 'ساب‌سکریپشن بقیهٔ کاربران را اینجا وصل کنید؛ کانفیگ‌های VLESS آن‌ها هم داخل ساب این کاربر می‌آید.', optional: 'اختیاری', enabled: 'فعال', confirmDelete: 'حذف شود؟',
+    fontFamily: 'فونت', bgUploaded: 'پس‌زمینه ذخیره شد', bgRemoved: 'پس‌زمینه حذف شد', usePanelDomain: 'دامنه‌ی پنل', exportLedger: 'خروجی لجند (CSV)', lastGenerated: 'آخرین زمان ساخت کانفیگ', fetches: 'دریافت سابسکریپشن', xrayCore: 'هستهٔ Xray', addMusic: 'افزودن موسیقی', musicPerUser: 'در حساب شما ذخیره می‌شود؛ دفعه بعد آپلود لازم نیست.', defaultMusic: 'آهنگ پیش‌فرض پنل', noMusic: 'هنوز آهنگی نیست', useMusic: 'استفاده از این آهنگ', musicAdded: 'موسیقی ذخیره شد', musicRemoved: 'آهنگ حذف شد', readFailed: 'خواندن فایل ممکن نشد', unsavedChanges: 'تغییرات ذخیره‌نشده', restartCore: 'راه‌اندازی مجدد هسته', refresh: 'بازخوانی', failed: 'ناموفق', xrayCore: 'هستهٔ Xray', xrayNote: 'هستهٔ Xray داخل ایمیج داکر است و با تغییر اینباندها خودکار ریستارت می‌شود.', wgPublicKey: 'کلید عمومی سرور WG', wgAddress: 'آدرس peer در WG', wgNote: 'کانفیگ‌های WireGuard برای سرور WG شما ساخته می‌شوند؛ Railway فقط TCP می‌دهد.', udpNote: 'پروتکل QUIC/UDP: کانفیگ‌ها ساخته می‌شوند اما Railway فقط TCP را باز می‌کند.', proxyNote: 'لینک‌های پروکسی SOCKS5/HTTP برای هر کلاینت ساخته می‌شوند.', realityNote: 'پروتکل Reality به یک پورت TCP خام نیاز دارد (از پورت HTTPS عبور نمی‌کند). در Railway یک TCP Proxy به پورتی که در تنظیمات → هستهٔ Xray نشان داده می‌شود (پیش‌فرض 8443) بسازید و همان دامنه و پورت را در Address/Port وارد کنید. کلید و short id خودکار ساخته می‌شوند.', realityPorts: 'پورت‌های TCP رلیتی', nothingToCopy: 'چیزی برای کپی نیست', copyFailed: 'مرورگر اجازهٔ کپی نداد؛ دستی انتخاب و کپی کنید', edit: 'ویرایش', editClient: 'ویرایش کاربر', expiresAt: 'انقضای دقیق (تاریخ و ساعت)', subLinks: 'ساب‌لینک‌ها', linkThisSub: 'افزودن ساب‌لینک', noSubLinks: 'ساب‌لینک متصل نیست', linkedSubs: 'متصل', noOtherClients: 'کاربر دیگری نیست', created: 'ساخته شده', subLinksNote: 'ساب‌سکریپشن بقیهٔ کاربران را اینجا وصل کنید؛ کانفیگ‌های VLESS آن‌ها هم داخل ساب این کاربر می‌آید.', optional: 'اختیاری', enabled: 'فعال', confirmDelete: 'حذف شود؟', nav_bot: 'ربات تلگرام', botToken: 'توکن ربات', botOwner: 'آیدی عددی مدیر', botSaveStart: 'ذخیره و اجرای ربات', botStatus: 'وضعیت ربات', botRunning: 'فعال', botStopped: 'متوقف', botTest: 'ارسال پیام تست', botStop: 'توقف ربات', botStartNow: 'اجرای ربات', botHandled: 'دستور اجراشده', botLastError: 'آخرین خطا', botUsername: 'نام کاربری ربات', botCommands: 'دستورها',
     appearanceSaved: 'ظاهر ذخیره شد', appearanceReset: 'ظاهر به حالت پیش‌فرض برگشت',
     uploading: 'در حال آپلود…',
     created: 'ساخته شد', updated: 'به‌روز شد', deleted: 'حذف شد', saved: 'ذخیره شد',
@@ -749,7 +756,7 @@ async function pageNodes(view) {
 function navList() {
   const items = [['overview', T('nav_overview'), '◈'], ['inbounds', T('nav_inbounds'), '≋'],
     ['clients', T('nav_clients'), '☰'], ['hosts', T('nav_hosts'), '⛁'],
-    ['nodes', T('nav_nodes'), '⬢'], ['logs', T('nav_logs'), '≡']];
+    ['nodes', T('nav_nodes'), '⬢'], ['bot', T('nav_bot'), '🤖'], ['logs', T('nav_logs'), '≡']];
   if (isOwner()) items.push(['admins', T('nav_admins'), '★']);
   items.push(['settings', T('nav_settings'), '⚙']);
   return items.map(([p, label, ic]) =>
@@ -792,11 +799,11 @@ function buildShell() {
 }
 
 function goto(page) {
-  const allowed = ['overview', 'inbounds', 'clients', 'hosts', 'nodes', 'logs', 'settings'];
+  const allowed = ['overview', 'inbounds', 'clients', 'hosts', 'nodes', 'bot', 'logs', 'settings'];
   if (page === 'admins' && !isOwner()) page = 'overview';
   S.page = allowed.concat(['admins']).includes(page) ? page : 'overview';
   const titles = { overview: T('nav_overview'), inbounds: T('nav_inbounds'), clients: T('nav_clients'),
-    hosts: T('nav_hosts'), nodes: T('nav_nodes'), logs: T('nav_logs'), admins: T('nav_admins'),
+    hosts: T('nav_hosts'), nodes: T('nav_nodes'), bot: T('nav_bot'), logs: T('nav_logs'), admins: T('nav_admins'),
     settings: T('nav_settings') };
   $('pageTitle').textContent = titles[S.page];
   $$('#nav button').forEach((b) => b.classList.toggle('on', b.dataset.p === S.page));
@@ -822,6 +829,7 @@ async function loadAll() {
   catch (e) { S.subTemplates = S.subTemplates || []; }
   try { const hs = await api('GET', '/api/hosts'); S.hosts = hs.items || []; }
   catch (e) { S.hosts = S.hosts || []; }
+  try { S.bot = await api('GET', '/api/bot'); } catch (e) { S.bot = S.bot || {}; }
   S.bgPresets = (backgrounds && backgrounds.presets) || [];
   S.bgCustom = !!(backgrounds && backgrounds.custom);
   S.me = me;
@@ -863,6 +871,7 @@ function render() {
   else if (S.page === 'inbounds') { if (needPage(T('nav_inbounds'), pageInbounds)) pageInbounds(page); }
   else if (S.page === 'clients') { if (needPage(T('nav_clients'), pageClients)) pageClients(page); }
   else if (S.page === 'hosts') { if (needPage(T('nav_hosts'), pageHosts)) pageHosts(page); }
+  else if (S.page === 'bot') { if (needPage(T('nav_bot'), pageBot)) pageBot(page); }
   else if (S.page === 'nodes') { if (needPage(T('nav_nodes'), pageNodes)) pageNodes(page); }
   else if (S.page === 'logs') { if (needPage(T('nav_logs'), pageLogs)) pageLogs(page); }
   else if (S.page === 'admins') { if (needPage(T('nav_admins'), pageAdmins)) pageAdmins(page); }
