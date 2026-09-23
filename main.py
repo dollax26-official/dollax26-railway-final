@@ -1652,7 +1652,7 @@ def _entry_host(ib: dict, cl: dict, request: Request) -> str:
 
 
 @app.get("/sub/{token}")
-async def subscription(token: str, request: Request, target: str = "auto"):
+async def subscription(token: str, request: Request, target: str = "auto", raw: int = 0):
     entries, label = _sub_entries(token)
     if not entries:
         return PlainTextResponse("not found", status_code=404)
@@ -1668,11 +1668,14 @@ async def subscription(token: str, request: Request, target: str = "auto"):
     entries_named = [{"inbound": ib, "client": cl, "host": _entry_host(ib, cl, request),
                       "name": f"{ib.get('name')}-{cl.get('name')}"} for ib, cl in entries]
     if tgt in ("clash", "clash-meta", "mihomo"):
-        body = protocol.clash_config(entries_named, db.setting("panel_name", "Dollax"))
-    elif tgt in ("singbox", "sing-box"):
-        body = protocol.singbox_config(entries_named)
-    else:
-        body = protocol.subscription_body(_sub_lines(entries, host, info_for=api_extras.info_target(token)))
+        return PlainTextResponse(protocol.clash_config(entries_named, db.setting("panel_name", "Dollax")))
+    if tgt in ("singbox", "sing-box"):
+        return PlainTextResponse(protocol.singbox_config(entries_named),
+                                 media_type="application/json")
+    lines = _sub_lines(entries, host, info_for=api_extras.info_target(token))
+    if raw:                       # plain-text list for clients that prefer it
+        return PlainTextResponse("\n".join(lines) + "\n", media_type="text/plain")
+    body = protocol.subscription_body(lines)
     headers = {
         "Subscription-Userinfo": _userinfo_header(entries),
         "Profile-Update-Interval": "12",
