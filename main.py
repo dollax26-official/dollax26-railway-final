@@ -1784,6 +1784,7 @@ async def subscription_info(token: str, request: Request, template: str = ""):
         "qr_svg": _qr_svg_markup(sub_url),
         "clients": clients_view,
         "info_link": (_page_info(token, entries) or ""),
+        "links_all": api_extras.links_all(entries, host, request),
         "language": prefs.get("language") or "en",
         "theme": prefs.get("theme") or "dark-green",
         "ui_style": prefs.get("style") or "solid",
