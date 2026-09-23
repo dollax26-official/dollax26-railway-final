@@ -248,7 +248,11 @@ def apps_html(t, esc, cls="app-chip") -> str:
 
 
 def info_block(t, esc, data) -> str:
-    """The 'account info' entry: a config that never connects, shown apart from the real ones."""
+    """The SUB INFO entry stays out of the graphical page (it only exists in subscriptions)."""
+    return ""
+
+
+def _info_block_unused(t, esc, data) -> str:
     link = str(data.get("info_link") or "")
     if not link:
         return ""
