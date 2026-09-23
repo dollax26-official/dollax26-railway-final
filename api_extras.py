@@ -435,3 +435,73 @@ def info_target(token: str):
     """The client whose summary rides along as the info entry (client tokens only)."""
     client = m.db.client_by_token(token)
     return dict(client) if client else None
+
+
+@nodes.get("/api/bot")
+async def api_bot_status(request: Request):
+    """TL robot: is it configured, is it polling, what did it do last?"""
+    if not m.authed(request):
+        return m.unauthorized()
+    if not m.is_owner(request):
+        return JSONResponse({"error": "Owner only."}, status_code=403)
+    st = m.tg_bot.status()
+    st["commands"] = "/help /status /stats /inbounds /newinbound /hosts /addhost /clients /newclient /delclient /link /logs /nodes"
+    st["panel"] = m.db.setting("panel_name", "Dollax Panel")
+    return st
+
+
+@nodes.post("/api/bot")
+async def api_bot_save(request: Request):
+    """Save the bot token + owner number id; the bot starts automatically."""
+    if not m.authed(request):
+        return m.unauthorized()
+    if not m.is_owner(request):
+        return JSONResponse({"error": "Owner only."}, status_code=403)
+    d = await request.json()
+    if "tg_token" in d:
+        m.db.set_setting("tg_token", str(d.get("tg_token") or "")[:200].strip())
+    if "tg_owner_id" in d:
+        m.db.set_setting("tg_owner_id", str(d.get("tg_owner_id") or "")[:40].strip())
+    m.tg_bot.register(m)
+    started = m.tg_bot.start()
+    m.db.log(m.current_user(request), "bot-config", "started" if started else "saved (incomplete)",
+             ip=m.client_ip(request))
+    return {"ok": True, "started": started, "status": m.tg_bot.status(),
+            "hint": "" if started else "Add both the bot token and the owner number id."}
+
+
+@nodes.post("/api/bot/test")
+async def api_bot_test(request: Request):
+    if not m.authed(request):
+        return m.unauthorized()
+    if not m.is_owner(request):
+        return JSONResponse({"error": "Owner only."}, status_code=403)
+    m.tg_bot.register(m)
+    res = await m.tg_bot.send_test()
+    m.db.log(m.current_user(request), "bot-test", "ok" if res.get("ok") else res.get("error", ""),
+             ip=m.client_ip(request))
+    return res
+
+
+@nodes.post("/api/bot/stop")
+async def api_bot_stop(request: Request):
+    if not m.authed(request):
+        return m.unauthorized()
+    if not m.is_owner(request):
+        return JSONResponse({"error": "Owner only."}, status_code=403)
+    m.tg_bot.stop()
+    m.db.log(m.current_user(request), "bot-stop", "", ip=m.client_ip(request))
+    return {"ok": True, "status": m.tg_bot.status()}
+
+
+@nodes.post("/api/bot/start")
+async def api_bot_start(request: Request):
+    if not m.authed(request):
+        return m.unauthorized()
+    if not m.is_owner(request):
+        return JSONResponse({"error": "Owner only."}, status_code=403)
+    m.tg_bot.register(m)
+    started = m.tg_bot.start()
+    return {"ok": True, "started": started, "status": m.tg_bot.status()}
+
+
