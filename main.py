@@ -299,15 +299,22 @@ def _looks_like_ip(value) -> bool:
 
 
 def client_remark(cl: dict) -> str:
-    """The tail of every config name: who it is, how much traffic is left, how long.
+    """Config names are just the inbound name - no extra traffic/day text.
 
-    Shown inside client apps as `DE-Frankfurt | 2 configs | ...` - every piece carries an
-    emoji so the important numbers are readable at a glance in a long node list.
+    (The account summary lives in the separate SUB INFO entry, see info_config.)
     """
+    return ""
+
+
+def info_label(cl: dict) -> str:
+    """The name of the SUB INFO entry: the account summary, clearly not a server."""
+    if not cl:
+        return "SUB INFO"
+
     limit = int(cl.get("limit_bytes") or 0)
     used = int(cl.get("used_bytes") or 0)
     left = protocol.fmt_bytes(max(0, limit - used)) if limit else "\u221e"
-    parts = [f"\U0001F464 {str(cl.get('name') or 'client')[:32]}", f"\U0001F4E6 {left} left"]
+    parts = ["SUB INFO", f"\U0001F464 {str(cl.get('name') or 'client')[:32]}", f"\U0001F4E6 {left} left"]
     # how much has been used: percentage and the raw numbers
     if limit:
         pct = max(0, min(999, round(used / limit * 100)))
@@ -1615,8 +1622,7 @@ def _sub_lines(entries, host, info_for=None):
         remark = "" if cl.get("is_inbound") else client_remark(cl)
         if loc and not cl.get("is_inbound"):
             remark = (remark + f" \u00b7 {loc}") if remark else loc
-        if cl.get("_linked_from"):
-            remark = str(cl["_linked_from"]) + " -> " + str(cl.get("name") or "") + " \u00b7 " + remark
+
         lines += protocol.link_list(ib, cl["uuid"], host, cl.get("clean_ips") or ib.get("clean_ips"),
                                     remark=remark, count=int(cl.get("config_count") or 2))
     if info_for:
@@ -1786,7 +1792,7 @@ async def subscription_info(token: str, request: Request, template: str = ""):
         "sub_base64": sub_url,
         "qr_svg": _qr_svg_markup(sub_url),
         "clients": clients_view,
-        "info_link": (_page_info(token, entries) or ""),
+        "info_link": "",
         "links_all": api_extras.links_all(entries, host, request),
         "language": prefs.get("language") or "en",
         "theme": prefs.get("theme") or "dark-green",
