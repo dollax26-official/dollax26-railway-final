@@ -4,111 +4,106 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="color-scheme" content="dark">
-<title>$panel — $title</title>
+<title>$panel — Subscription Information</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
 *{box-sizing:border-box}
-body{margin:0;background:#f4f5f7;color:#0f172a;font-family:Inter,system-ui,-apple-system,sans-serif}
-.xs-wrap{max-width:940px;margin:26px auto;padding:0 14px}
-.xs-top{background:linear-gradient(135deg,#1f2937,#0f172a);border-radius:18px;padding:20px;color:#fff;
-  display:flex;gap:16px;align-items:center;flex-wrap:wrap}
-.xs-logo{width:46px;height:46px;border-radius:13px;background:linear-gradient(135deg,#3b82f6,#8b5cf6);
-  display:grid;place-items:center;font-weight:800;font-size:18px}
-.xs-title{font-weight:700;font-size:16px}
-.xs-sub{opacity:.7;font-size:11px;margin-top:3px}
-.xs-grow{flex:1 1 auto}
-.xs-qr{background:#fff;border-radius:14px;padding:10px;width:150px;height:150px;flex:0 0 auto}
-.xs-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(124px,1fr));gap:10px;margin:14px 0}
-.xs-tile{background:#fff;border:1px solid #e5e7eb;border-radius:13px;padding:11px 12px}
-.xs-k{font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:#6b7280}
-.xs-v{font-weight:700;font-size:15px;margin-top:3px;word-break:break-word}
-.sc-card{background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:14px;margin-top:12px}
-.sc-head{display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:12px}
-.sc-name{font-weight:700}
-.sc-grow{flex:1 1 auto}
-.sc-badge{font-size:10px;border-radius:99px;padding:2px 8px;background:#eef2f7;color:#374151}
-.sc-badge.ok{background:#dcfce7;color:#166534}
-.sc-badge.warn{background:#fef3c7;color:#92400e}
-.sc-badge.bad{background:#fee2e2;color:#991b1b}
-.sc-bar{height:7px;border-radius:99px;background:#eef2f7;overflow:hidden;margin:10px 0}
-.sc-bar>i{display:block;height:100%;background:linear-gradient(90deg,#3b82f6,#8b5cf6)}
-.sc-meta{font-size:11px;color:#374151;margin-bottom:8px;display:flex;gap:10px;flex-wrap:wrap}
-.sc-row{display:flex;gap:8px;align-items:center;background:#f9fafb;border:1px solid #eef2f7;
-  border-radius:10px;padding:7px 9px;margin-top:6px}
-.sc-idx{font-size:10px;color:#6b7280;flex:0 0 auto}
-.sc-code{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
-  font-family:'JetBrains Mono',monospace;font-size:10.5px}
-.sc-btn{border:1px solid #d1d5db;background:#fff;color:#111827;border-radius:9px;padding:5px 10px;
-  font-size:11px;cursor:pointer;transition:.15s}
-.sc-btn:hover{background:#111827;color:#fff;border-color:#111827}
-.xs-foot{text-align:center;color:#6b7280;font-size:10px;margin:18px 0 4px}
-@media (max-width:640px){.xs-qr{width:118px;height:118px}}
-
-.sc-cfgname { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font-size: 11px; font-weight: 600; }
-.app-group { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 8px; }
-.app-group-k { font-size: 10px; opacity: .65; text-transform: uppercase; letter-spacing: .06em; min-width: 62px; }
-.app-chip { font-size: 11px; text-decoration: none; padding: 4px 9px; border-radius: 99px;
-  border: 1px solid currentColor; opacity: .82; }
-.app-chip:hover { opacity: 1; }
-.info-card { border-style: dashed; opacity: .92; }
+body{margin:0;background:#0F1013;color:#E8EAED;font-family:Inter,system-ui,-apple-system,sans-serif}
+.xu{max-width:940px;margin:22px auto;padding:0 16px}
+.xu-title{font-size:24px;font-weight:700;color:#F2F3F5;text-align:center;margin:6px 0 18px}
+.xu-card{background:#141519;border:1px solid #26272C;border-radius:12px;padding:20px;margin-bottom:16px}
+.xu-card h2{font-size:19px;font-weight:700;color:#F2F3F5;text-align:center;margin:0 0 16px}
+.xu-rows{display:grid;gap:10px}
+.xu-row{display:flex;align-items:center;gap:12px;background:#1C1D21;border:1px solid #26272C;border-radius:8px;
+  padding:12px 14px;min-height:52px}
+.xu-k{color:#9AA0A6;font-size:13px;min-width:96px}
+.xu-v{color:#E8EAED;font-size:14px}
+.xu-pill{background:#2FA84F;color:#fff;border-radius:4px;padding:2px 9px;font-size:12px;font-weight:600;
+  text-transform:uppercase;letter-spacing:.03em}
+.xu-code{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  font-family:'JetBrains Mono',ui-monospace,Menlo,Consolas,monospace;font-size:13px;color:#E3E8EE}
+.xu-btn{background:#4A7DE0;color:#fff;border:0;border-radius:6px;padding:8px 16px;font-size:13px;font-weight:500;
+  cursor:pointer;font-family:inherit;transition:.15s}
+.xu-btn:hover{background:#3B6FD0}
+.xu-btn.alt{background:#5A7DA6}
+.xu-btn.alt:hover{background:#4A6D96}
+.xu-all{display:block;width:100%;background:#2FA84F;color:#fff;border:0;border-radius:8px;padding:14px;
+  font-size:15px;font-weight:600;cursor:pointer;margin-top:16px;font-family:inherit}
+.xu-all:hover{background:#279143}
+details.qr summary{list-style:none;cursor:pointer;background:#5A7DA6;color:#fff;border-radius:6px;padding:8px 12px;
+  font-size:13px}
+details.qr summary:hover{background:#4A6D96}
+.qrbox{background:#fff;border-radius:8px;padding:8px;width:150px;height:150px;margin-top:8px}
+.xu-apps{display:flex;flex-wrap:wrap;gap:8px;justify-content:center}
+.app-group{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:8px;justify-content:center}
+.app-group-k{font-size:11px;color:#9AA0A6;min-width:64px}
+.app-chip{font-size:12px;color:#CFE0FF;text-decoration:none;border:1px solid #3B5B96;border-radius:999px;padding:5px 11px}
+.app-chip:hover{background:#4A7DE0;color:#fff}
+.sc-row{display:flex;align-items:center;gap:12px;background:#1C1D21;border:1px solid #26272C;
+  border-radius:8px;padding:12px 14px;min-height:52px}
+.sc-badge{background:#4A7DE0;color:#fff;border-radius:4px;padding:2px 8px;font-size:11px;font-weight:600;
+  text-transform:uppercase}
+.sc-cfgname{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  font-family:'JetBrains Mono',ui-monospace,Menlo,Consolas,monospace;font-size:13px;color:#E3E8EE}
+.sc-btn{background:#4A7DE0;color:#fff;border:0;border-radius:6px;padding:8px 14px;font-size:13px;cursor:pointer;
+  font-family:inherit}
+.sc-btn:hover{background:#3B6FD0}
+.xu-acct{display:grid;gap:10px}
+.xu-acct-row{display:flex;justify-content:space-between;gap:12px;background:#1C1D21;border:1px solid #26272C;
+  border-radius:8px;padding:12px 14px}
+.xu-acct-row .k{color:#9AA0A6;font-size:13px}
+.xu-acct-row .v{color:#E8EAED;font-size:14px;font-weight:600}
+.info-card{background:#141519;border:1px dashed #3A3B42;border-radius:12px;padding:16px;margin-bottom:16px}
+.foot{text-align:center;color:#6B7280;font-size:11px;margin:16px 0 6px}
 </style>
 </head>
 <body>
-<div class="xs-wrap">
-  <div class="xs-top">
-    <div class="xs-logo">D</div>
-    <div style="min-width:0">
-      <div class="xs-title">$panel · $title</div>
-      <div class="xs-sub">$endpoint</div>
-      <div class="xs-sub">$protocol · $clients $l_clients · $configs $l_configs</div>
-    </div>
-    <div class="xs-grow"></div>
-    <div class="xs-qr">$qr</div>
-  </div>
+<div class="xu">
+  <h1 class="xu-title">$l_subinfo</h1>
 
-  <div class="xs-tiles">$tags</div>
-
-  <div class="sc-card">
-    <div class="sc-head"><span class="sc-name">$l_sub</span></div>
-    <div class="sc-row">
-      <code class="sc-code">$sub_url</code>
-      <button class="sc-btn" type="button" data-copy="$sub_url">$l_copy</button>
-      <button class="sc-btn" type="button" data-copy="$sub_clash">$l_clash</button>
-      <button class="sc-btn" type="button" data-copy="$sub_singbox">$l_singbox</button>
+  <div class="xu-card">
+    <h2>$l_account</h2>
+    <div class="xu-acct">
+      <div class="xu-acct-row"><span class="k">$l_user</span><span class="v">$title</span></div>
+      <div class="xu-acct-row"><span class="k">$l_status</span><span class="v"><span class="xu-pill">$l_active</span></span></div>
+      <div class="xu-acct-row"><span class="k">$l_used</span><span class="v">$used · $pct%</span></div>
+      <div class="xu-acct-row"><span class="k">$l_remaining</span><span class="v">$remaining</span></div>
+      <div class="xu-acct-row"><span class="k">$l_expires</span><span class="v">$expires</span></div>
     </div>
   </div>
 
-  $cards
+  <div class="xu-card">
+    <h2>$l_links</h2>
+    <div class="xu-rows">$rows</div>
+    <button class="xu-all" type="button" data-copy="$sub_url">$l_copy_all</button>
+  </div>
 
   $info
 
-  <div class="sc-card"><div class="sc-head"><span class="sc-name">$l_apps</span></div>$apps</div>
+  <div class="xu-card">
+    <h2>$l_apps</h2>
+    $apps
+  </div>
 
-  <p class="xs-foot">$l_footer · $panel</p>
+  <p class="foot">$panel · $endpoint</p>
 </div>
 <script>
 (function () {
   function fallback(text) {
     var ta = document.createElement('textarea');
-    ta.value = text; ta.setAttribute('readonly', '');
-    ta.style.position = 'fixed'; ta.style.top = '-1000px';
+    ta.value = text; ta.style.position = 'fixed'; ta.style.top = '-1000px';
     document.body.appendChild(ta); ta.select(); ta.setSelectionRange(0, text.length);
-    var ok = false;
-    try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
-    document.body.removeChild(ta);
-    return ok;
+    var ok = false; try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+    document.body.removeChild(ta); return ok;
   }
   document.addEventListener('click', function (e) {
     var b = e.target.closest('[data-copy]');
     if (!b) return;
     e.preventDefault();
     var txt = b.getAttribute('data-copy') || '';
-    var done = function () {
-      var old = b.textContent; b.textContent = 'Copied!';
-      setTimeout(function () { b.textContent = old; }, 1200);
-    };
+    var done = function () { var o = b.textContent; b.textContent = '$l_copied';
+      setTimeout(function () { b.textContent = o; }, 1200); };
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(txt).then(done, function () { if (fallback(txt)) done(); });
     } else if (fallback(txt)) { done(); }
