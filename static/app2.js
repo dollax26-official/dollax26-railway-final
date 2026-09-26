@@ -91,6 +91,15 @@ async function pageBot(view) {
           <input id="botToken" value="${esc(st.token_set ? '••••••••••••' : '')}" placeholder="123456:ABC-DEF…"></label>
         <label class="field"><span>${T('botOwner')}</span>
           <input id="botOwner" value="${esc(st.owner || '')}" placeholder="123456789"></label>
+        <label class="field"><span>${T('botTrialInbound')}</span>
+          <select id="botTrialInbound">
+            <option value="">${T('botTrialAuto')}</option>
+            ${(S.inbounds || []).map((x) => `<option value="${esc(x.id)}" ${st.trial_inbound === x.id ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}
+          </select></label>
+        <label class="field"><span>${T('botTrialGb')}</span>
+          <input id="botTrialGb" type="number" min="1" max="1000" value="${esc(st.trial_gb || 5)}"></label>
+        <label class="field"><span>${T('botTrialDays')}</span>
+          <input id="botTrialDays" type="number" min="1" max="3650" value="${esc(st.trial_days || 30)}"></label>
       </div>
       <div class="toolbar" style="margin-top:12px">
         <button class="btn primary" id="botSave">${T('botSaveStart')}</button>
@@ -123,7 +132,10 @@ async function pageBot(view) {
     const btn = $('botSave');
     btn.disabled = true;
     try {
-      const payload = { tg_owner_id: $('botOwner').value };
+      const payload = { tg_owner_id: $('botOwner').value,
+                        tg_trial_inbound: $('botTrialInbound') ? $('botTrialInbound').value : '',
+                        tg_trial_gb: $('botTrialGb') ? $('botTrialGb').value : 5,
+                        tg_trial_days: $('botTrialDays') ? $('botTrialDays').value : 30 };
       const tok = $('botToken').value;
       if (tok && tok.indexOf('•') === -1) payload.tg_token = tok;
       const r = await api('POST', '/api/bot', payload);
