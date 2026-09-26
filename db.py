@@ -255,6 +255,12 @@ CREATE TABLE IF NOT EXISTS client_links(
   created TEXT NOT NULL,
   PRIMARY KEY(client_id, linked_id)
 );
+CREATE TABLE IF NOT EXISTS tg_users(
+  tg_id TEXT PRIMARY KEY,
+  lang TEXT NOT NULL DEFAULT 'fa',
+  client_id TEXT NOT NULL DEFAULT '',
+  created TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS nodes(
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL DEFAULT '',
@@ -656,6 +662,43 @@ def linked_clients(cid):
         if row:
             out.append(dict(row))
     return out
+
+
+# ---------------------------------------------------------------- telegram bot users
+def get_bot_user(tg_id):
+    with conn() as c:
+        row = c.execute("SELECT * FROM tg_users WHERE tg_id=?", (str(tg_id),)).fetchone()
+    return dict(row) if row else {"tg_id": str(tg_id), "lang": "fa", "client_id": ""}
+
+
+def set_bot_user(tg_id, **fields):
+    cur = get_bot_user(tg_id)
+    cur.update({k: v for k, v in fields.items() if k in ("lang", "client_id")})
+    with _write_lock, conn() as c:
+        c.execute("INSERT INTO tg_users(tg_id,lang,client_id,created) VALUES(?,?,?,?) "
+                  "ON CONFLICT(tg_id) DO UPDATE SET lang=excluded.lang, client_id=excluded.client_id",
+                  (str(tg_id), cur.get("lang") or "fa", cur.get("client_id") or "", now()))
+        c.commit()
+    return cur
+
+
+def clients_for_tg(tg_id):
+    """The panel clients bound to this Telegram account (for the profile button)."""
+    tid = str(tg_id)
+    out = []
+    for row in list_clients():
+        if str(row.get("note") or "").strip() == "tg:" + tid:
+            out.append(dict(row))
+    return out
+
+
+def bind_client_to_tg(client_id, tg_id):
+    """Link a client to a Telegram id (stored in the client's note as tg:<id>)."""
+    row = client_row(client_id)
+    if not row:
+        return False
+    update_client(client_id, {"note": "tg:" + str(tg_id) if tg_id else ""})
+    return True
 
 # ---------------------------------------------------------------- nodes (panel to panel)
 # A node is another Dollax panel in a different location. The connecting panel pulls that
