@@ -1167,6 +1167,8 @@ async def api_create_client(request: Request):
     existing = db.clients_for_inbound(iid)
     if row["client_limit"] and len(existing) >= int(row["client_limit"]):
         return JSONResponse({"error": "This inbound reached its client limit."}, status_code=409)
+    if not api_extras.inbound_allowed(request, iid):
+        return JSONResponse({"error": "Your account cannot use that inbound."}, status_code=403)
     name = str(d.get("name") or "Client").strip()[:80] or "Client"
     extras = _clean_extra_refs(d.get("extra_inbounds"), iid)
     cid = db.create_client(
