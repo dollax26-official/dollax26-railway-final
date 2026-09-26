@@ -31,6 +31,8 @@ async def api_list_hosts(request: Request):
     """The address pool an admin wants their configs to hand out (x-ui style hosts list)."""
     if not m.authed(request):
         return m.unauthorized()
+    if not m.section_allowed(request, "hosts"):
+        return JSONResponse({"error": "Your account cannot open that section."}, status_code=403)
     return {"items": [dict(r) for r in m.db.list_hosts()]}
 
 
@@ -38,6 +40,8 @@ async def api_list_hosts(request: Request):
 async def api_add_host(request: Request):
     if not m.authed(request):
         return m.unauthorized()
+    if not m.section_allowed(request, "hosts"):
+        return JSONResponse({"error": "Your account cannot open that section."}, status_code=403)
     d = await request.json()
     addrs = d.get("addresses")
     if isinstance(addrs, str):
@@ -62,6 +66,8 @@ async def api_add_host(request: Request):
 async def api_update_host(request: Request, hid: str):
     if not m.authed(request):
         return m.unauthorized()
+    if not m.section_allowed(request, "hosts"):
+        return JSONResponse({"error": "Your account cannot open that section."}, status_code=403)
     if not m.db.host_row(hid):
         return JSONResponse({"error": "Host not found"}, status_code=404)
     d = await request.json()
@@ -82,6 +88,8 @@ async def api_update_host(request: Request, hid: str):
 async def api_delete_host(request: Request, hid: str):
     if not m.authed(request):
         return m.unauthorized()
+    if not m.section_allowed(request, "hosts"):
+        return JSONResponse({"error": "Your account cannot open that section."}, status_code=403)
     ok = m.db.delete_host(hid)
     m.db.log(m.current_user(request), "host-remove", hid, ip=m.client_ip(request))
     return {"ok": ok, "items": [dict(r) for r in m.db.list_hosts()]}
@@ -298,6 +306,8 @@ async def api_node_token_rotate(request: Request):
 async def api_list_nodes(request: Request):
     if not m.authed(request):
         return m.unauthorized()
+    if not m.section_allowed(request, "nodes"):
+        return JSONResponse({"error": "Your account cannot open that section."}, status_code=403)
     items = [node_view(r) for r in m.db.list_nodes()]
     return {"items": items, "remote_inbounds": node_inbounds(),
             "token": m.db.node_token() if m.is_owner(request) else "",
@@ -308,6 +318,8 @@ async def api_list_nodes(request: Request):
 async def api_add_node(request: Request):
     if not m.authed(request):
         return m.unauthorized()
+    if not m.section_allowed(request, "nodes"):
+        return JSONResponse({"error": "Your account cannot open that section."}, status_code=403)
     d = await request.json()
     url = str(d.get("url") or "")
     token = str(d.get("token") or "").strip()
@@ -440,6 +452,8 @@ async def api_bot_status(request: Request):
     """TL robot: is it configured, is it polling, what did it do last?"""
     if not m.authed(request):
         return m.unauthorized()
+    if not m.section_allowed(request, "bot"):
+        return JSONResponse({"error": "Your account cannot open that section."}, status_code=403)
     if not m.is_owner(request):
         return JSONResponse({"error": "Owner only."}, status_code=403)
     st = m.tg_bot.status()
@@ -453,6 +467,8 @@ async def api_bot_save(request: Request):
     """Save the bot token + owner number id; the bot starts automatically."""
     if not m.authed(request):
         return m.unauthorized()
+    if not m.section_allowed(request, "bot"):
+        return JSONResponse({"error": "Your account cannot open that section."}, status_code=403)
     if not m.is_owner(request):
         return JSONResponse({"error": "Owner only."}, status_code=403)
     d = await request.json()
