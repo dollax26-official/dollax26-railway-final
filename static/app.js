@@ -756,9 +756,12 @@ async function pageNodes(view) {
 
 /* ------------------------------------------------------------------ shell */
 function navList() {
+  // an admin with a limited access list only sees the sections they were given
+  const allowed = (S.me && S.me.sections && S.me.sections !== 'all') ? S.me.sections : null;
   const items = [['overview', T('nav_overview'), '◈'], ['inbounds', T('nav_inbounds'), '≋'],
     ['clients', T('nav_clients'), '☰'], ['hosts', T('nav_hosts'), '⛁'],
-    ['nodes', T('nav_nodes'), '⬢'], ['bot', T('nav_bot'), '🤖'], ['logs', T('nav_logs'), '≡']];
+    ['nodes', T('nav_nodes'), '⬢'], ['bot', T('nav_bot'), '🤖'], ['logs', T('nav_logs'), '≡']]
+    .filter(([id]) => !allowed || allowed.includes(id));
   if (isOwner()) items.push(['admins', T('nav_admins'), '★']);
   items.push(['settings', T('nav_settings'), '⚙']);
   return items.map(([p, label, ic]) =>
