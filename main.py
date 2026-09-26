@@ -1380,7 +1380,8 @@ async def api_set_settings(request: Request):
         return JSONResponse({"error": "Only the owner can change panel settings."}, status_code=403)
     d = await request.json()
     allowed = ("panel_name", "public_base_url", "default_port", "xray_bridge_host", "xray_bridge_port",
-               "reality_host", "reality_public_port", "tg_token", "tg_owner_id")
+               "reality_host", "reality_public_port", "tg_token", "tg_owner_id",
+               "tg_trial_inbound", "tg_trial_gb", "tg_trial_days")
     for key in allowed:
         if key in d:
             db.set_setting(key, str(d[key])[:200].strip())
