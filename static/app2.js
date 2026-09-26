@@ -430,13 +430,29 @@ function adminModal(a) {
         <option value="owner" ${a && a.role === 'owner' ? 'selected' : ''}>${T('owner')}</option></select></label>
       <label class="field span-2"><span>${editing ? T('newPassword') : T('password')}</span><input id="adPass" type="password" placeholder="${editing ? '••••' : ''}"></label>
     </div>
+
+    <div class="field" style="margin-top:12px"><span>${T('accessInbounds')} <span class="muted">(${T('accessAll')})</span></span>
+      <div class="pick-list" id="adInbounds">
+        ${(S.inbounds || []).length ? (S.inbounds || []).map((x) => `<label class="chk pick"><input type="checkbox" value="${esc(x.id)}"
+          ${a && (a.inbounds || []).includes(x.id) ? 'checked' : ''}> <span>${esc(x.name)} · ${esc((x.protocol || '').toUpperCase())}</span></label>`).join('')
+          : `<span class="muted">${T('noInbounds')}</span>`}
+      </div></label>
+
+    <div class="field" style="margin-top:12px"><span>${T('accessSections')} <span class="muted">(${T('accessAll')})</span></span>
+      <div class="pick-list" id="adSections">
+        ${['overview', 'inbounds', 'clients', 'hosts', 'nodes', 'bot', 'logs'].map((sec) => `<label class="chk pick"><input type="checkbox" value="${sec}"
+          ${a && (a.sections || []).includes(sec) ? 'checked' : ''}> <span>${esc(T('nav_' + sec) || sec)}</span></label>`).join('')}
+      </div></label>
+
     <div class="modal-foot"><span class="grow"></span>
       <button class="btn" id="adCancel">${T('cancel')}</button>
       <button class="btn primary" id="adSave">${T('save')}</button></div>`);
   $('adCancel').onclick = closeModal;
   $('adSave').onclick = async () => {
     try {
-      const payload = { role: $('adRole').value };
+      const payload = { role: $('adRole').value,
+                        inbounds: $$('#adInbounds input:checked').map((el) => el.value),
+                        sections: $$('#adSections input:checked').map((el) => el.value) };
       if ($('adPass').value) payload.password = $('adPass').value;
       if (editing) await api('PATCH', `/api/admins/${encodeURIComponent(a.username)}`, payload);
       else {
