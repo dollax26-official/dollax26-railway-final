@@ -121,7 +121,7 @@ def help_text() -> str:
             "`/newclient INBOUND NAME [GB] [DAYS]`\n"
             "`/delclient NAME`\n"
             "`/link NAME` - subscription + first config\n"
-            "`/logs [N]` - recent activity (default 10)\n"
+            
             "`/nodes` - connected nodes")
 
 
@@ -229,7 +229,10 @@ async def handle_command(text: str, chat_id) -> str:
         return "⛔ This bot is private."
 
     if cmd in ("start", "help"):
-        return help_text()
+        await tg_call(DTOKEN, "sendMessage", request_timeout=15.0, chat_id=chat_id,
+                      text=main_text(chat_id), parse_mode="Markdown",
+                      reply_markup=main_keyboard(chat_id))
+        return ""
     if cmd == "status":
         return _status_text()
     if cmd == "stats":
@@ -283,15 +286,7 @@ async def handle_command(text: str, chat_id) -> str:
     if cmd == "link":
         return _link(args)
     if cmd == "logs":
-        n = int(args[0]) if args and str(args[0]).isdigit() else 10
-        rows = _M.db.activity(min(40, max(1, n)))
-        if not rows:
-            return "no activity yet"
-        out = []
-        for r in rows:
-            who = r.get("username") or "system"
-            out.append(f"• `{str(r.get('created') or '')[5:19]}` {who} {r.get('action')} {r.get('detail') or ''}".rstrip())
-        return "🧾 *recent activity*\n" + "\n".join(out)
+        return "⛔ activity log is not available from the bot."
     if cmd == "nodes":
         nodes = _M.db.list_nodes()
         if not nodes:
@@ -301,6 +296,282 @@ async def handle_command(text: str, chat_id) -> str:
             f"{len(_M.db.json_raw(n.get('snapshot'), []))} inbounds"
             for n in nodes[:15])
     return "🤔 unknown command. /help"
+
+
+# ================================================================== button UI
+# Telegram has no button colours, so the green profile button is marked with a green
+# square instead: 🟩 پروفایل من. Everything is reachable by tapping - no typing commands.
+L = {
+    "fa": {"config": "📥 دریافت کانفیگ", "profile": "🟩 پروفایل من", "clients": "👥 کاربران",
+           "inbounds": "📶 اینباندها", "hosts": "🗂 هاست‌ها", "nodes": "🛰 نودها",
+           "admins": "🛡 ادمین‌ها", "bot": "⚙️ ربات", "back": "⬅️ بازگشت", "lang": "🌐 زبان",
+           "new": "➕ ساخت", "list": "📋 فهرست", "used": "مصرف‌شده", "left": "باقی‌مانده",
+           "days": "روز باقی‌مانده", "no_client": "حساب شما به پنل متصل نیست؛ به مدیر بگویید.",
+           "sub": "لینک اشتراک", "configs": "کانفیگ‌ها", "created": "ساخته شد",
+           "ask_newclient": "بنویسید: نام‌اینباند | نام‌کاربر | گیگابایت | روز",
+           "ask_newinbound": "بنویسید: نام | آدرس | پورت | پروتکل | شبکه | امنیت",
+           "ask_host": "آدرس هاست را بنویسید", "ask_node": "بنویسید: نام | آدرس‌پنل | توکن | کشور",
+           "ask_admin": "بنویسید: نام‌کاربری | رمز", "done": "انجام شد", "usage": "مصرف شما",
+           "self": "👤 پروفایل من"},
+    "en": {"config": "📥 Get config", "profile": "🟩 My profile", "clients": "👥 Clients",
+           "inbounds": "📶 Inbounds", "hosts": "🗂 Hosts", "nodes": "🛰 Nodes",
+           "admins": "🛡 Admins", "bot": "⚙️ Bot", "back": "⬅️ Back", "lang": "🌐 Language",
+           "new": "➕ New", "list": "📋 List", "used": "Used", "left": "Left",
+           "days": "days left", "no_client": "Your account is not linked to the panel yet - ask your admin.",
+           "sub": "Subscription", "configs": "Configs", "created": "created",
+           "ask_newclient": "Send: inbound | client | GB | days",
+           "ask_newinbound": "Send: name | address | port | protocol | network | security",
+           "ask_host": "Send the host address", "ask_node": "Send: name | panel url | token | country",
+           "ask_admin": "Send: username | password", "done": "done", "usage": "Your usage",
+           "self": "👤 My profile"},
+}
+PENDING = {}          # chat_id -> what the next text message is for
+
+
+def tr(lang, key):
+    return L.get(lang, L["fa"]).get(key, L.get("en", {}).get(key, key))
+
+
+def _lang(chat_id) -> str:
+    try:
+        return str(_M.db.get_bot_user(chat_id).get("lang") or "fa")
+    except Exception:  # noqa: BLE001
+        return "fa"
+
+
+def _is_owner(chat_id) -> bool:
+    return bool(DOWNER) and str(chat_id) == str(DOWNER)
+
+
+def kb(rows):
+    return {"inline_keyboard": rows}
+
+
+def main_keyboard(chat_id) -> dict:
+    lg = _lang(chat_id)
+    if _is_owner(chat_id):
+        return kb([[{"text": tr(lg, "clients"), "callback_data": "menu:clients"},
+                    {"text": tr(lg, "inbounds"), "callback_data": "menu:inbounds"}],
+                   [{"text": tr(lg, "hosts"), "callback_data": "menu:hosts"},
+                    {"text": tr(lg, "nodes"), "callback_data": "menu:nodes"}],
+                   [{"text": tr(lg, "admins"), "callback_data": "menu:admins"},
+                    {"text": tr(lg, "bot"), "callback_data": "menu:bot"}],
+                   [{"text": tr(lg, "lang"), "callback_data": "menu:lang"}]])
+    return kb([[{"text": tr(lg, "config"), "callback_data": "act:get"}],
+               [{"text": tr(lg, "profile"), "callback_data": "act:me"}]])
+
+
+def main_text(chat_id) -> str:
+    lg = _lang(chat_id)
+    if _is_owner(chat_id):
+        return ("🤖 *TL robot*\\n" + _status_text() + "\\n\\n" + tr(lg, "bot") + " → " +
+                " · ".join([tr(lg, "clients"), tr(lg, "inbounds"), tr(lg, "hosts"),
+                            tr(lg, "nodes"), tr(lg, "admins")]))
+    return ("🤖 *TL robot*\\n\\n" + tr(lg, "config") + "  |  " + tr(lg, "profile"))
+
+
+def _bound_clients(chat_id):
+    return _M.db.clients_for_tg(chat_id)
+
+
+def profile_text(chat_id) -> str:
+    lg = _lang(chat_id)
+    rows = _bound_clients(chat_id)
+    if not rows:
+        return "👤 " + tr(lg, "self") + "\\n\\n" + tr(lg, "no_client")
+    out = ["👤 *" + tr(lg, "self") + "*"]
+    for c in rows:
+        limit = int(c.get("limit_bytes") or 0)
+        used = int(c.get("used_bytes") or 0)
+        pct = round(used / limit * 100) if limit else 0
+        left = _fmt_bytes(max(0, limit - used)) if limit else "∞"
+        d = _M.db.days_left(c.get("expires_at")) if c.get("expires_at") else None
+        out.append(f"\\n*{c.get('name')}*\\n"
+                   f"{tr(lg, 'used')}: {_fmt_bytes(used)} ({pct}%)\\n"
+                   f"{tr(lg, 'left')}: {left}\\n"
+                   f"{tr(lg, 'days')}: {d if d is not None else '∞'}")
+    return "\\n".join(out)
+
+
+def config_text(chat_id) -> str:
+    lg = _lang(chat_id)
+    rows = _bound_clients(chat_id)
+    if not rows:
+        return tr(lg, "no_client")
+    c = rows[0]
+    cl = _M.client_dict(c, _FakeRequest())
+    sub = _M.base_url(_FakeRequest()) + "/sub/" + str(c.get("sub_token") or "")
+    first = (cl.get("links") or [""])[0]
+    return (f"📥 *{c.get('name')}*\\n\\n{tr(lg, 'sub')}:\\n`{sub}`\\n\\n"
+            f"{tr(lg, 'configs')}: {len(cl.get('links') or [])}\\n`{first}`")
+
+
+def lang_keyboard() -> dict:
+    return kb([[{"text": "🇮🇷 فارسی", "callback_data": "lang:fa"},
+                {"text": "🇬🇧 English", "callback_data": "lang:en"}],
+               [{"text": "⬅️", "callback_data": "menu:main"}]])
+
+
+def list_keyboard(what, chat_id) -> tuple:
+    """(text, keyboard) for the owner listing screens."""
+    lg = _lang(chat_id)
+    rows = []
+    if what == "clients":
+        items = _M.db.list_clients()
+        lines = [f"👥 *{tr(lg, 'clients')}* ({len(items)})"]
+        for c in items[:20]:
+            lines.append(f"• {c['name']} — {_fmt_bytes(c.get('used_bytes'))}"
+                         f"{'/' + _fmt_bytes(c.get('limit_bytes')) if c.get('limit_bytes') else ''}")
+        rows.append([{"text": tr(lg, "new") + " " + tr(lg, "clients"), "callback_data": "act:new:client"}])
+    elif what == "inbounds":
+        items = _inbounds()
+        lines = [f"📶 *{tr(lg, 'inbounds')}* ({len(items)})"]
+        for i in items[:20]:
+            lines.append(f"• {i['name']} — {i['protocol']}/{i['network']}/{i['security']} · "
+                         f"{i['address'] or '(panel domain)'}:{i['port']}")
+        rows.append([{"text": tr(lg, "new") + " " + tr(lg, "inbounds"), "callback_data": "act:new:inbound"}])
+    elif what == "hosts":
+        items = _M.db.list_hosts()
+        lines = [f"🗂 *{tr(lg, 'hosts')}* ({len(items)})"] + [f"• `{h['address']}`" for h in items[:20]]
+        rows.append([{"text": tr(lg, "new") + " " + tr(lg, "hosts"), "callback_data": "act:new:host"}])
+    elif what == "nodes":
+        items = _M.db.list_nodes()
+        lines = [f"🛰 *{tr(lg, 'nodes')}* ({len(items)})"]
+        for n in items[:20]:
+            lines.append(f"• {n['name']} ({n['location'] or '-'}) — {n['status'] or 'never synced'}")
+        rows.append([{"text": "🔗 " + tr(lg, "new"), "callback_data": "act:new:node"}])
+    elif what == "admins":
+        items = _M.db.list_admins()
+        lines = [f"🛡 *{tr(lg, 'admins')}* ({len(items)})"]
+        for a in items[:20]:
+            lines.append(f"• {a['username']} — {a.get('role') or 'admin'}")
+        rows.append([{"text": tr(lg, "new") + " " + tr(lg, "admins"), "callback_data": "act:new:admin"}])
+    else:
+        lines, rows = ["?"], []
+    rows.append([{"text": tr(lg, "back"), "callback_data": "menu:main"}])
+    return "\\n".join(lines), kb(rows)
+
+
+async def handle_callback(token: str, query: dict):
+    """A button was tapped: answer it and (re)render the right screen."""
+    chat_id = str((query.get("message") or {}).get("chat", {}).get("id") or (query.get("from") or {}).get("id") or "")
+    msg_id = (query.get("message") or {}).get("message_id")
+    data = str(query.get("data") or "")
+    await tg_call(token, "answerCallbackQuery", request_timeout=15.0, callback_query_id=query.get("id"))
+
+    if not _is_owner(chat_id) and not data.startswith(("act:get", "act:me", "lang:", "menu:main", "menu:lang")):
+        # everyone else only has the two buttons
+        await tg_call(token, "sendMessage", request_timeout=15.0, chat_id=chat_id,
+                      text=main_text(chat_id), reply_markup=main_keyboard(chat_id))
+        STATE["handled"] += 1
+        return
+
+    text, markup = None, None
+    if data == "menu:main":
+        text, markup = main_text(chat_id), main_keyboard(chat_id)
+    elif data == "menu:lang":
+        text, markup = tr(_lang(chat_id), "lang"), lang_keyboard()
+    elif data.startswith("lang:"):
+        new = data.split(":", 1)[1]
+        _M.db.set_bot_user(chat_id, lang=new)
+        text, markup = tr(new, "done") + " · " + tr(new, "bot"), main_keyboard(chat_id)
+    elif data == "act:me":
+        text = profile_text(chat_id)
+        markup = kb([[{"text": tr(_lang(chat_id), "lang"), "callback_data": "menu:lang"}],
+                     [{"text": tr(_lang(chat_id), "back"), "callback_data": "menu:main"}]])
+    elif data == "act:get":
+        text = config_text(chat_id)
+        markup = main_keyboard(chat_id)
+    elif data.startswith("menu:"):
+        what = data.split(":", 1)[1]
+        if what == "bot":
+            text = (_status_text() + "\\n\\n" + tr(_lang(chat_id), "lang"))
+            markup = kb([[{"text": tr(_lang(chat_id), "lang"), "callback_data": "menu:lang"}],
+                         [{"text": tr(_lang(chat_id), "back"), "callback_data": "menu:main"}]])
+        else:
+            text, markup = list_keyboard(what, chat_id)
+    elif data.startswith("act:new:"):
+        what = data.split(":")[2]
+        PENDING[chat_id] = "new:" + what
+        text = tr(_lang(chat_id), "ask_" + ("newclient" if what == "client" else
+                                           "newinbound" if what == "inbound" else
+                                           "host" if what == "host" else
+                                           "node" if what == "node" else "admin"))
+        markup = kb([[{"text": tr(_lang(chat_id), "back"), "callback_data": "menu:main"}]])
+    else:
+        text, markup = main_text(chat_id), main_keyboard(chat_id)
+
+    if msg_id:
+        ok, _ = await tg_call(token, "editMessageText", request_timeout=20.0, chat_id=chat_id,
+                              message_id=msg_id, text=text[:4000], parse_mode="Markdown",
+                              reply_markup=markup, disable_web_page_preview=True)
+        if ok:
+            STATE["handled"] += 1
+            return
+    await tg_call(token, "sendMessage", request_timeout=20.0, chat_id=chat_id, text=text[:4000],
+                  parse_mode="Markdown", reply_markup=markup, disable_web_page_preview=True)
+    STATE["handled"] += 1
+
+
+async def handle_text(token: str, chat_id, text: str):
+    """A message arrived: either a pending form (after a button) or a menu action."""
+    chat_id = str(chat_id)
+    lg = _lang(chat_id)
+    pending = PENDING.pop(chat_id, None)
+    raw = str(text or "").strip()
+
+    if pending and _is_owner(chat_id):
+        parts = [p.strip() for p in raw.split("|")] if "|" in raw else raw.split()
+        try:
+            if pending == "new:client":
+                if len(parts) < 2:
+                    PENDING[chat_id] = pending
+                    return tr(lg, "ask_newclient")
+                reply = _new_client(parts)
+            elif pending == "new:inbound":
+                reply = _new_inbound(parts)
+            elif pending == "new:host":
+                _M.db.add_host(parts[0], created_by="telegram")
+                reply = "✅ " + tr(lg, "done") + " · " + parts[0]
+            elif pending == "new:node":
+                if len(parts) < 3:
+                    PENDING[chat_id] = pending
+                    return tr(lg, "ask_node")
+                nid = _M.db.add_node({"name": parts[0], "url": parts[1], "token": parts[2],
+                                      "location": parts[3] if len(parts) > 3 else "",
+                                      "created_by": "telegram"})
+                res = await asyncio.to_thread(_M.api_extras.refresh_node, nid)
+                reply = ("✅ " + parts[0] + " " + tr(lg, "done") if res.get("ok")
+                         else "⚠️ " + str(res.get("error")))
+            elif pending == "new:admin":
+                if len(parts) < 2:
+                    PENDING[chat_id] = pending
+                    return tr(lg, "ask_admin")
+                _M.db.create_admin(parts[0], parts[1], role="admin")
+                reply = "✅ " + parts[0] + " " + tr(lg, "done")
+            else:
+                reply = main_text(chat_id)
+        except Exception as exc:  # noqa: BLE001
+            reply = "⚠️ " + exc.__class__.__name__ + ": " + str(exc)[:120]
+        await tg_call(token, "sendMessage", request_timeout=20.0, chat_id=chat_id, text=reply[:4000],
+                      parse_mode="Markdown", reply_markup=main_keyboard(chat_id))
+        STATE["handled"] += 1
+        return reply
+
+    if _is_owner(chat_id):
+        # a plain message from the owner: still allow the classic commands
+        reply = await handle_command(raw, chat_id)
+        if reply:
+            await tg_call(token, "sendMessage", request_timeout=20.0, chat_id=chat_id, text=reply[:4000],
+                          parse_mode="Markdown", reply_markup=main_keyboard(chat_id))
+            STATE["handled"] += 1
+        return reply
+
+    # non-owner: only the two buttons
+    await tg_call(token, "sendMessage", request_timeout=20.0, chat_id=chat_id, text=main_text(chat_id),
+                  parse_mode="Markdown", reply_markup=main_keyboard(chat_id))
+    STATE["handled"] += 1
+    return main_text(chat_id)
 
 
 # ---------------------------------------------------------------- lifecycle
@@ -314,16 +585,19 @@ async def _poll_once(token: str) -> bool:
     STATE["last_poll"] = time.time()
     for upd in res or []:
         STATE["offset"] = max(STATE["offset"], int(upd.get("update_id") or 0))
+        if upd.get("callback_query"):
+            try:
+                await handle_callback(token, upd["callback_query"])
+            except Exception as exc:  # noqa: BLE001
+                STATE["last_error"] = f"callback: {exc.__class__.__name__}: {exc}"[:160]
+            continue
         msg = upd.get("message") or {}
         text = msg.get("text") or ""
         chat = (msg.get("chat") or {}).get("id")
         if not text or chat is None:
             continue
         try:
-            reply = await handle_command(text, chat)
-            if reply:
-                await send(token, chat, reply, markdown=True)
-                STATE["handled"] += 1
+            await handle_text(token, chat, text)
         except Exception as exc:  # noqa: BLE001
             STATE["last_error"] = f"handler: {exc.__class__.__name__}: {exc}"[:160]
     return True
