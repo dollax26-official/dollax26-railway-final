@@ -393,6 +393,51 @@ def profile_text(chat_id) -> str:
     return "\\n".join(out)
 
 
+def trial_settings() -> tuple:
+    """(trial inbound id or '', GB, days) - how a new bot user is provisioned."""
+    ib = str(_M.db.setting("tg_trial_inbound") or "").strip()
+    gb = _M.as_int(_M.db.setting("tg_trial_gb", "5"), 5, 1, 1000)
+    days = _M.as_int(_M.db.setting("tg_trial_days", "30"), 30, 1, 3650)
+    return ib, gb, days
+
+
+def _trial_inbound(ib_setting: str):
+    """The inbound a new bot user gets a client on."""
+    if ib_setting:
+        found = find_inbound(ib_setting)
+        if found:
+            return found
+    for i in _inbounds():                       # first usable inbound
+        if i.get("enabled") and str(i.get("security") or "").lower() != "wireguard":
+            return i
+    return None
+
+
+def provision_for(chat_id, display_name: str = ""):
+    """Give this Telegram user their own client (once) and return (client, error)."""
+    rows = _bound_clients(chat_id)
+    if rows:
+        return rows[0], ""                      # already has one - never create a second
+    ib_setting, gb, days = trial_settings()
+    ib = _trial_inbound(ib_setting)
+    if not ib:
+        return None, "no inbound is available for new accounts yet"
+    name = (display_name or "").strip()[:26] or ("tg-" + str(chat_id)[-6:])
+    try:
+        cid = _M.db.create_client(
+            ib["id"], name,
+            limit_bytes=int(gb) * 1024 ** 3,
+            expires_at=_M.expiry(days),
+            ip_limit=0, connection_limit=0, speed_limit_mbps=0,
+            note="tg:" + str(chat_id),           # this is what /profile reads
+            enabled=1, created_by="telegram", extra_inbounds=[], config_count=2,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return None, f"{exc.__class__.__name__}: {str(exc)[:100]}"
+    row = _M.db.client_row(cid)
+    return dict(row) if row else None, ""
+
+
 def config_text(chat_id) -> str:
     lg = _lang(chat_id)
     rows = _bound_clients(chat_id)
@@ -480,8 +525,31 @@ async def handle_callback(token: str, query: dict):
         markup = kb([[{"text": tr(_lang(chat_id), "lang"), "callback_data": "menu:lang"}],
                      [{"text": tr(_lang(chat_id), "back"), "callback_data": "menu:main"}]])
     elif data == "act:get":
-        text = config_text(chat_id)
-        markup = main_keyboard(chat_id)
+        display = " ".join(filter(None, [((query.get("from") or {}).get("first_name") or ""),
+                                         ((query.get("from") or {}).get("last_name") or "")]))
+        created, err = provision_for(chat_id, display)
+        if err or not created:
+            lgx = _lang(chat_id)
+            text = "⚠️ " + (err or tr(lgx, "no_client"))
+            markup = main_keyboard(chat_id)
+        else:
+            lgx = _lang(chat_id)
+            gb = int(created.get("limit_bytes") or 0) // 1024 ** 3
+            d = _M.db.days_left(created.get("expires_at")) if created.get("expires_at") else None
+            text = (f"🎁 *{tr(lgx, 'config')}*\n\n"
+                    f"👤 {created.get('name')}\n📦 {gb} GB\n⏳ {d} {tr(lgx, 'days')}\n\n"
+                    + config_text(chat_id).split("\n\n", 1)[-1])
+            markup = main_keyboard(chat_id)
+        STATE["handled"] += 1
+        if msg_id:
+            ok, _ = await tg_call(token, "editMessageText", request_timeout=20.0, chat_id=chat_id,
+                                  message_id=msg_id, text=text[:4000], parse_mode="Markdown",
+                                  reply_markup=markup, disable_web_page_preview=True)
+            if ok:
+                return
+        await tg_call(token, "sendMessage", request_timeout=20.0, chat_id=chat_id, text=text[:4000],
+                      parse_mode="Markdown", reply_markup=markup, disable_web_page_preview=True)
+        return
     elif data.startswith("menu:"):
         what = data.split(":", 1)[1]
         if what == "bot":
