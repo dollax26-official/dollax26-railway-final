@@ -989,6 +989,13 @@ def reset_usage(cid, reset_traffic=True):
         c.commit()
 
 
+def reset_client_usage(cid) -> None:
+    """Zero a client's counters (the bot's "reset usage" button)."""
+    with _write_lock, conn() as c:
+        c.execute("UPDATE clients SET up_bytes=0, down_bytes=0, used_bytes=0 WHERE id=?", (cid,))
+        c.commit()
+
+
 def add_client_usage(cid, up=0, down=0):
     up, down = int(up or 0), int(down or 0)
     if up <= 0 and down <= 0:
