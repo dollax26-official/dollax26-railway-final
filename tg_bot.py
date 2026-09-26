@@ -760,6 +760,7 @@ def start() -> bool:
 
 
 def stop() -> None:
+    """Stop polling and release the single-instance lock so a restart can take it again."""
     STATE["running"] = False
     task = STATE.get("task")
     if task:
@@ -768,6 +769,23 @@ def stop() -> None:
         except Exception:  # noqa: BLE001
             pass
     STATE["task"] = None
+    fh = _LOCK_HANDLE.get("fh")
+    if fh:
+        try:
+            if os.name == "nt":
+                import msvcrt
+                fh.seek(0)
+                msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            fh.close()
+        except Exception:  # noqa: BLE001
+            pass
+        _LOCK_HANDLE["fh"] = None
 
 
 def status() -> dict:
