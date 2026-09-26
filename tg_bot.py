@@ -570,10 +570,10 @@ async def handle_callback(token: str, query: dict):
         text, markup = main_text(chat_id), main_keyboard(chat_id)
 
     if msg_id:
-        ok, _ = await tg_call(token, "editMessageText", request_timeout=20.0, chat_id=chat_id,
-                              message_id=msg_id, text=text[:4000], parse_mode="Markdown",
-                              reply_markup=markup, disable_web_page_preview=True)
-        if ok:
+        ok, info = await tg_call(token, "editMessageText", request_timeout=20.0, chat_id=chat_id,
+                                 message_id=msg_id, text=text[:4000], parse_mode="Markdown",
+                                 reply_markup=markup, disable_web_page_preview=True)
+        if ok or "not modified" in str((info or {}).get("error", "")).lower():
             STATE["handled"] += 1
             return
     await tg_call(token, "sendMessage", request_timeout=20.0, chat_id=chat_id, text=text[:4000],
@@ -644,8 +644,11 @@ async def handle_text(token: str, chat_id, text: str):
 
 # ---------------------------------------------------------------- lifecycle
 async def _poll_once(token: str) -> bool:
+    # NB: callback_query must be included (or the field omitted) or Telegram never delivers
+    # button taps - the bot would look dead even though the menu renders.
     ok, res = await tg_call(token, "getUpdates", request_timeout=35.0,
-                            offset=STATE["offset"] + 1, timeout=25, allowed_updates=["message"])
+                            offset=STATE["offset"] + 1, timeout=25,
+                            allowed_updates=["message", "callback_query"])
     if not ok:
         STATE["last_error"] = str((res or {}).get("error") or "poll failed")[:160]
         return False
@@ -700,6 +703,32 @@ def tokens() -> tuple:
         return "", ""
 
 
+_LOCK_HANDLE = {"fh": None}
+
+
+def _acquire_single_instance() -> bool:
+    """Only one process may poll a bot token; a second one gets 409 Conflict and upsets
+    Telegram's update cursor. The panel can run two listeners (a port safety net), so this
+    makes the first one win and the others stay quiet."""
+    try:
+        path = os.path.join(str(_M.db.DATA_DIR), "tg_bot.lock")   # works for Path or str
+        fh = open(path, "a+")
+        try:
+            if os.name == "nt":
+                import msvcrt
+                msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except Exception:  # noqa: BLE001
+            fh.close()
+            return False
+        _LOCK_HANDLE["fh"] = fh
+        return True
+    except Exception:  # noqa: BLE001
+        return True                     # cannot lock (no fs): better to run than not
+
+
 def start() -> bool:
     """Start (or restart) polling when a token + owner id are configured."""
     global DTOKEN, DOWNER
@@ -716,6 +745,11 @@ def start() -> bool:
         STATE["running"] = False
         if token and not owner:
             STATE["last_error"] = "owner number id is missing"
+        return False
+    if not _acquire_single_instance():
+        STATE["running"] = False
+        STATE["last_error"] = "another panel listener is already polling this bot (single instance lock)"
+        print("[dollax] TL robot: another instance holds the poll lock - not polling here", flush=True)
         return False
     try:
         STATE["task"] = asyncio.get_event_loop().create_task(_loop(token))
