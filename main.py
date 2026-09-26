@@ -393,38 +393,6 @@ def _client_inbound_refs(cl: dict) -> list:
     return refs[:5]
 
 
-def reality_endpoint() -> tuple:
-    """The panel's raw-TCP public endpoint for Reality, if the owner configured one."""
-    host = str(db.setting("reality_host") or "").strip()
-    port = as_int(db.setting("reality_public_port"), 0, 0, 65535)
-    return host, port
-
-
-def link_inbound(ib: dict, request: Request) -> dict:
-    """A copy of the inbound that is safe to build client links from.
-
-    Reality cannot survive a TLS-terminating proxy, so when its address still points at the
-    panel's own HTTPS domain (or is empty) the configured raw-TCP endpoint is substituted.
-    """
-    ib = dict(ib)
-    if protocol.clean_protocol(ib.get("protocol")) == "wireguard":
-        return ib
-    if str(ib.get("security") or "").lower() != "reality":
-        return ib
-    host, port = reality_endpoint()
-    base = str(db.setting("public_base_url") or "")
-    panel_hosts = {str(effective_host(request) or "").lower(),
-                   base.replace("https://", "").replace("http://", "").split("/")[0].lower()}
-    addr = str(ib.get("address") or "").strip()
-    bare = addr.replace("https://", "").replace("http://", "").split("/")[0].lower()
-    if host and (not addr or addr.lower() in panel_hosts or bare in panel_hosts):
-        ib["address"] = host
-        ib["_reality_endpoint"] = True
-        if port:
-            ib["port"] = port
-    return ib
-
-
 def _client_entries(cl: dict, request: Request):
     """[(inbound_dict, uuid, address, location)] for every location this client uses."""
     host = effective_host(request)
@@ -444,7 +412,7 @@ def _client_entries(cl: dict, request: Request):
         row = db.inbound_row(ref)
         if not row:
             continue
-        ib = link_inbound(dict(row), request)
+        ib = api_extras.link_inbound(dict(row), request)
         ib["clean_ips"] = db.json_list(ib.get("clean_ips"))
         ips = db.json_list(cl.get("clean_ips")) or ib.get("clean_ips") or []
         addr = ib.get("address") or host
@@ -588,7 +556,9 @@ async def api_me(request: Request):
     user = current_user(request)
     row = db.get_admin(user)
     return {"username": user, "role": (row["role"] if row else "admin"), "prefs": db.get_prefs(user),
-            "version": APP_VERSION, "host": effective_host(request)}
+            "version": APP_VERSION, "host": effective_host(request),
+            "sections": (sorted(api_extras.admin_scope(request)[1]) if api_extras.admin_scope(request)[1] is not None else "all"),
+            "inbounds_scope": (sorted(api_extras.admin_scope(request)[0]) if api_extras.admin_scope(request)[0] is not None else "all")}
 
 
 @app.post("/api/me/password")
@@ -836,7 +806,7 @@ async def api_diagnostics(request: Request):
     # Reality / port sanity: configs that cannot work through the public HTTPS port
     try:
         default_port = as_int(db.setting("default_port", "443"), 443, 1, 65535)
-        rhost, rport = reality_endpoint()
+        rhost, rport = api_extras.reality_endpoint()
         panel_host = effective_host(request)
         for row in inbounds:
             ib = dict(row)
@@ -885,6 +855,8 @@ async def api_diagnostics(request: Request):
 async def api_activity(request: Request):
     if not authed(request):
         return unauthorized()
+    if not api_extras.section_allowed(request, "logs"):
+        return JSONResponse({"error": "Your account cannot open that section."}, status_code=403)
     return {"items": db.activity(120)}
 
 
@@ -1027,7 +999,12 @@ async def api_list_inbounds(request: Request):
         ib["limit_human"] = protocol.fmt_bytes(int(ib.get("limit_bytes") or 0))
         ib["client_count"] = int(ib.get("clients") or 0)
         remote.append(ib)
-    return {"items": [inbound_dict(r) for r in rows], "remote": remote,
+    items = [inbound_dict(r) for r in rows]
+    allowed_ibs, _ = api_extras.admin_scope(request)
+    if allowed_ibs is not None:            # an admin with a limited access list
+        items = [i for i in items if str(i["id"]) in allowed_ibs]
+        remote = []
+    return {"items": items, "remote": remote,
             "nodes": [{"id": n["id"], "name": n["name"], "location": n["location"], "flag": n["flag"],
                        "status": n["status"]} for n in db.list_nodes()]}
 @app.post("/api/inbounds")
@@ -1045,7 +1022,7 @@ async def api_create_inbound(request: Request):
     db.log(current_user(request), "inbound-create", fields["name"], ip=client_ip(request))
     ib = inbound_dict(db.inbound_row(iid))
     self_uuid = db.inbound_row(iid)["uuid"]
-    ib["links"] = protocol.link_list(link_inbound(ib, request), self_uuid, effective_host(request))
+    ib["links"] = protocol.link_list(api_extras.link_inbound(ib, request), self_uuid, effective_host(request))
     ib["link"] = ib["links"][0] if ib["links"] else ""
     ib["sub_url"] = f"{base_url(request)}/sub/{db.inbound_row(iid)['sub_token']}"
     return {"ok": True, "id": iid, "inbound": ib}
@@ -1145,7 +1122,7 @@ async def api_inbound_info(request: Request, iid: str):
     clients = [client_dict(c, request, inbound=dict(row)) for c in db.clients_for_inbound(iid)]
     self_cl = _inbound_as_client(row)
     return {"inbound": ib, "clients": clients,
-            "self_link": (protocol.link_list(link_inbound(ib, request), self_cl["uuid"],
+            "self_link": (protocol.link_list(api_extras.link_inbound(ib, request), self_cl["uuid"],
                                              effective_host(request)) or [""])[0] if self_cl["uuid"] else "",
             "sub_url": f"{base_url(request)}/sub/{row['sub_token']}",
             "config_count": int(row["config_count"] or 1)}
@@ -1341,6 +1318,8 @@ async def api_ledger(request: Request):
     """Durable per-client record: quota, consumed, remaining, expiry, last config generation."""
     if not authed(request):
         return unauthorized()
+    if not api_extras.section_allowed(request, "logs"):
+        return JSONResponse({"error": "Your account cannot open that section."}, status_code=403)
     return {"generated_at": db.now(), "items": db.ledger_rows()}
 
 
@@ -1445,7 +1424,7 @@ async def api_list_admins(request: Request):
         return unauthorized()
     if not is_owner(request):
         return JSONResponse({"error": "Only the owner can manage admins."}, status_code=403)
-    return {"items": db.list_admins()}
+    return {"items": [api_extras.admin_dict(r) for r in db.list_admins()]}
 
 
 @app.post("/api/admins")
@@ -1462,8 +1441,9 @@ async def api_create_admin(request: Request):
     if db.get_admin(username):
         return JSONResponse({"error": "That username already exists."}, status_code=409)
     db.create_admin(username, password, "owner" if d.get("role") == "owner" else "admin")
+    api_extras.save_access(username, d)
     db.log(current_user(request), "admin-create", username, ip=client_ip(request))
-    return {"ok": True, "items": db.list_admins()}
+    return {"ok": True, "items": [api_extras.admin_dict(r) for r in db.list_admins()]}
 
 
 @app.patch("/api/admins/{username}")
@@ -1482,8 +1462,9 @@ async def api_update_admin(request: Request, username: str):
     if demoting and db.owner_count() <= 1:
         return JSONResponse({"error": "The last owner cannot be demoted or disabled."}, status_code=400)
     db.update_admin(username, role=role, enabled=bool(enabled), password=str(d.get("password") or "") or None)
+    api_extras.save_access(username, d)
     db.log(current_user(request), "admin-update", username, ip=client_ip(request))
-    return {"ok": True, "items": db.list_admins()}
+    return {"ok": True, "items": [api_extras.admin_dict(r) for r in db.list_admins()]}
 
 
 @app.delete("/api/admins/{username}")
@@ -1824,12 +1805,16 @@ async def subscription_info(token: str, request: Request, template: str = ""):
 # work for VMess / Shadowsocks / Reality / UDP and the extra transports (xhttp, gRPC,
 # HTTPUpgrade). Bytes still flow through the panel so quotas and per-client accounting work.
 def _visible_clients(request: Request) -> list:
-    """Clients an admin may see: their own, plus everything for the owner."""
+    """Clients an admin may see: their own on their inbounds, everything for the owner."""
     rows = db.list_clients()
     if is_owner(request):
         return rows
     me = current_user(request)
-    return [r for r in rows if str(r.get("created_by") or "") == me]
+    ibs, _ = api_extras.admin_scope(request)
+    out = [r for r in rows if str(r.get("created_by") or "") == me]
+    if ibs is not None:
+        out = [r for r in out if str(r.get("inbound_id")) in ibs]
+    return out
 
 
 def _client_guard(request: Request, row) -> bool:
