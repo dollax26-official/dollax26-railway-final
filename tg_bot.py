@@ -302,7 +302,9 @@ async def handle_command(text: str, chat_id) -> str:
 # Telegram has no button colours, so the green profile button is marked with a green
 # square instead: 🟩 پروفایل من. Everything is reachable by tapping - no typing commands.
 L = {
-    "fa": {"config": "📥 دریافت کانفیگ", "profile": "🟩 پروفایل من", "clients": "👥 کاربران",
+    "fa": {"inbound": "اینباند", "status": "وضعیت", "enabled": "فعال", "disabled": "غیرفعال",
+           "name": "نام", "quota": "حجم (گیگ)", "reset": "صفر کردن مصرف", "link": "کانفیگ",
+           "config": "📥 دریافت کانفیگ", "profile": "🟩 پروفایل من", "clients": "👥 کاربران",
            "inbounds": "📶 اینباندها", "hosts": "🗂 هاست‌ها", "nodes": "🛰 نودها",
            "admins": "🛡 ادمین‌ها", "bot": "⚙️ ربات", "back": "⬅️ بازگشت", "lang": "🌐 زبان",
            "new": "➕ ساخت", "list": "📋 فهرست", "used": "مصرف‌شده", "left": "باقی‌مانده",
@@ -313,7 +315,9 @@ L = {
            "ask_host": "آدرس هاست را بنویسید", "ask_node": "بنویسید: نام | آدرس‌پنل | توکن | کشور",
            "ask_admin": "بنویسید: نام‌کاربری | رمز", "done": "انجام شد", "usage": "مصرف شما",
            "self": "👤 پروفایل من"},
-    "en": {"config": "📥 Get config", "profile": "🟩 My profile", "clients": "👥 Clients",
+    "en": {"inbound": "Inbound", "status": "Status", "enabled": "active", "disabled": "disabled",
+           "name": "Name", "quota": "Quota (GB)", "reset": "Reset usage", "link": "Config",
+           "config": "📥 Get config", "profile": "🟩 My profile", "clients": "👥 Clients",
            "inbounds": "📶 Inbounds", "hosts": "🗂 Hosts", "nodes": "🛰 Nodes",
            "admins": "🛡 Admins", "bot": "⚙️ Bot", "back": "⬅️ Back", "lang": "🌐 Language",
            "new": "➕ New", "list": "📋 List", "used": "Used", "left": "Left",
@@ -463,10 +467,13 @@ def list_keyboard(what, chat_id) -> tuple:
     rows = []
     if what == "clients":
         items = _M.db.list_clients()
-        lines = [f"👥 *{tr(lg, 'clients')}* ({len(items)})"]
-        for c in items[:20]:
-            lines.append(f"• {c['name']} — {_fmt_bytes(c.get('used_bytes'))}"
-                         f"{'/' + _fmt_bytes(c.get('limit_bytes')) if c.get('limit_bytes') else ''}")
+        lines = [f"👥 *{tr(lg, 'clients')}* ({len(items)})",
+                 "👆 " + ("برای جزئیات روی کاربر بزنید" if lg == "fa" else "tap a client for details")]
+        for c in items[:18]:                      # every client is its own button
+            used = _fmt_bytes(c.get("used_bytes"))
+            cap = "/" + _fmt_bytes(c.get("limit_bytes")) if c.get("limit_bytes") else ""
+            rows.append([{"text": "👤 " + str(c["name"])[:24] + " — " + used + cap,
+                          "callback_data": "cl:" + str(c["id"])}])
         rows.append([{"text": tr(lg, "new") + " " + tr(lg, "clients"), "callback_data": "act:new:client"}])
     elif what == "inbounds":
         items = _inbounds()
@@ -550,6 +557,47 @@ async def handle_callback(token: str, query: dict):
         await tg_call(token, "sendMessage", request_timeout=20.0, chat_id=chat_id, text=text[:4000],
                       parse_mode="Markdown", reply_markup=markup, disable_web_page_preview=True)
         return
+    elif data.startswith("cl:"):
+        cid = data.split(":", 1)[1]
+        text, markup = client_detail_text(cid), client_detail_keyboard(cid, chat_id)
+    elif data.startswith("editc:"):
+        cid = data.split(":", 1)[1]
+        text = "✏️ *" + tr(_lang(chat_id), "edit") + "*"
+        markup = client_edit_keyboard(cid, chat_id)
+    elif data.startswith("delc:"):
+        cid = data.split(":", 1)[1]
+        row = _M.db.client_row(cid)
+        text = "🗑 " + (str(row["name"]) if row else "?") + " — ?"
+        markup = kb([[{"text": "✅ " + tr(_lang(chat_id), "del"), "callback_data": "confirmdel:" + cid},
+                      {"text": tr(_lang(chat_id), "back"), "callback_data": "cl:" + cid}]])
+    elif data.startswith("confirmdel:"):
+        cid = data.split(":", 1)[1]
+        row = _M.db.client_row(cid)
+        name = str(row["name"]) if row else "?"
+        _M.db.delete_client(cid)
+        text, markup = "🗑 *" + name + "* " + tr(_lang(chat_id), "deleted"), main_keyboard(chat_id)
+    elif data.startswith("linkc:"):
+        cid = data.split(":", 1)[1]
+        row = _M.db.client_row(cid)
+        text = _link([str(row["name"])]) if row else "⚠️ not found"
+        markup = client_detail_keyboard(cid, chat_id)
+    elif data.startswith("prof:"):
+        cid = data.split(":", 1)[1]
+        text = profile_text(chat_id)
+        markup = client_detail_keyboard(cid, chat_id)
+    elif data.startswith("e:toggle:") or data.startswith("e:reset:"):
+        _, field, cid = data.split(":", 2)
+        row = _M.db.client_row(cid)
+        if field == "toggle" and row:
+            _M.db.update_client(cid, {"enabled": 0 if row["enabled"] else 1})
+        elif field == "reset" and row:
+            _M.db.reset_client_usage(cid)
+        text, markup = client_detail_text(cid), client_detail_keyboard(cid, chat_id)
+    elif data.startswith("e:"):
+        _, field, cid = data.split(":", 2)
+        PENDING[chat_id] = "edit:" + field + ":" + cid
+        text = "✏️ " + tr(_lang(chat_id), field if field != "count" else "configs")
+        markup = kb([[{"text": tr(_lang(chat_id), "back"), "callback_data": "editc:" + cid}]])
     elif data.startswith("menu:"):
         what = data.split(":", 1)[1]
         if what == "bot":
@@ -587,6 +635,14 @@ async def handle_text(token: str, chat_id, text: str):
     lg = _lang(chat_id)
     pending = PENDING.pop(chat_id, None)
     raw = str(text or "").strip()
+
+    if pending and pending.startswith("edit:") and _is_owner(chat_id):
+        _, field, cid = pending.split(":", 2)
+        reply = _apply_edit(chat_id, field, cid, raw)
+        await tg_call(token, "sendMessage", request_timeout=20.0, chat_id=chat_id, text=reply[:4000],
+                      parse_mode="Markdown", reply_markup=client_detail_keyboard(cid, chat_id))
+        STATE["handled"] += 1
+        return reply
 
     if pending and _is_owner(chat_id):
         parts = [p.strip() for p in raw.split("|")] if "|" in raw else raw.split()
@@ -640,6 +696,79 @@ async def handle_text(token: str, chat_id, text: str):
                   parse_mode="Markdown", reply_markup=main_keyboard(chat_id))
     STATE["handled"] += 1
     return main_text(chat_id)
+
+
+def client_detail_text(cid: str) -> str:
+    row = _M.db.client_row(cid)
+    if not row:
+        return "⚠️ client not found"
+    c = dict(row)
+    limit = int(c.get("limit_bytes") or 0)
+    used = int(c.get("used_bytes") or 0)
+    pct = round(used / limit * 100) if limit else 0
+    left = _fmt_bytes(max(0, limit - used)) if limit else "∞"
+    d = _M.db.days_left(c.get("expires_at")) if c.get("expires_at") else None
+    ib = _M.db.inbound_row(c.get("inbound_id")) if c.get("inbound_id") else None
+    labels = L.get(_lang("0"), L["fa"])
+    return (f"👤 *{c.get('name')}*\n\n"
+            f"📶 {labels['inbound']}: {(ib['name'] if ib else '-')}\n"
+            f"📊 {labels['used']}: {_fmt_bytes(used)} ({pct}%)\n"
+            f"📦 {labels['left']}: {left}\n"
+            f"⏳ {labels['days']}: {d if d is not None else '∞'}\n"
+            f"🔌 {labels['status']}: {labels['enabled'] if c.get('enabled') else labels['disabled']}\n"
+            f"🧩 {labels['configs']}: {int(c.get('config_count') or 2)}")
+
+
+def client_detail_keyboard(cid: str, chat_id) -> dict:
+    lg = _lang(chat_id)
+    r = []
+    r.append([{"text": "✏️ " + tr(lg, "edit"), "callback_data": "editc:" + cid},
+              {"text": "🗑 " + tr(lg, "del"), "callback_data": "delc:" + cid}])
+    r.append([{"text": "🔗 " + tr(lg, "link"), "callback_data": "linkc:" + cid},
+              {"text": "🟩 " + tr(lg, "self"), "callback_data": "prof:" + cid}])
+    r.append([{"text": tr(lg, "back"), "callback_data": "menu:clients"}])
+    return kb(r)
+
+
+def client_edit_keyboard(cid: str, chat_id) -> dict:
+    lg = _lang(chat_id)
+    row = _M.db.client_row(cid)
+    on = bool(row and row["enabled"])
+    return kb([
+        [{"text": "✏️ " + tr(lg, "name"), "callback_data": "e:name:" + cid},
+         {"text": "📦 " + tr(lg, "quota"), "callback_data": "e:quota:" + cid}],
+        [{"text": "⏳ " + tr(lg, "days"), "callback_data": "e:days:" + cid},
+         {"text": "🧩 " + tr(lg, "configs"), "callback_data": "e:count:" + cid}],
+        [{"text": ("🚫 " + tr(lg, "disable")) if on else ("✅ " + tr(lg, "enable")),
+          "callback_data": "e:toggle:" + cid},
+         {"text": "🔄 " + tr(lg, "reset"), "callback_data": "e:reset:" + cid}],
+        [{"text": tr(lg, "back"), "callback_data": "cl:" + cid}],
+    ])
+
+
+def _apply_edit(chat_id, field: str, cid: str, value: str) -> str:
+    """Apply one edited field to a client and answer with the result."""
+    lg = _lang(chat_id)
+    row = _M.db.client_row(cid)
+    if not row:
+        return "⚠️ client not found"
+    v = str(value or "").strip()
+    if field == "name":
+        _M.db.update_client(cid, {"name": v[:80] or row["name"]})
+        return "✅ " + tr(lg, "name") + ": " + v[:40]
+    if field == "quota":
+        gb = float(v.replace("gb", "").strip() or 0) if v else 0
+        _M.db.update_client(cid, {"limit_bytes": int(max(0.0, gb) * 1024 ** 3)})
+        return "✅ " + tr(lg, "quota") + ": " + (str(gb) + " GB" if gb else "∞")
+    if field == "days":
+        n = int(v) if v.isdigit() else 0
+        _M.db.update_client(cid, {"expires_at": _M.expiry(n) if n else ""})
+        return "✅ " + tr(lg, "days") + ": " + (str(n) if n else "∞")
+    if field == "count":
+        n = max(1, min(10, int(v) if v.isdigit() else 2))
+        _M.db.update_client(cid, {"config_count": n})
+        return "✅ " + tr(lg, "configs") + ": " + str(n)
+    return "⚠️ " + field
 
 
 # ---------------------------------------------------------------- lifecycle
