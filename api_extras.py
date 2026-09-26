@@ -31,7 +31,7 @@ async def api_list_hosts(request: Request):
     """The address pool an admin wants their configs to hand out (x-ui style hosts list)."""
     if not m.authed(request):
         return m.unauthorized()
-    if not m.section_allowed(request, "hosts"):
+    if not section_allowed(request, "hosts"):
         return JSONResponse({"error": "Your account cannot open that section."}, status_code=403)
     return {"items": [dict(r) for r in m.db.list_hosts()]}
 
@@ -40,7 +40,7 @@ async def api_list_hosts(request: Request):
 async def api_add_host(request: Request):
     if not m.authed(request):
         return m.unauthorized()
-    if not m.section_allowed(request, "hosts"):
+    if not section_allowed(request, "hosts"):
         return JSONResponse({"error": "Your account cannot open that section."}, status_code=403)
     d = await request.json()
     addrs = d.get("addresses")
@@ -66,7 +66,7 @@ async def api_add_host(request: Request):
 async def api_update_host(request: Request, hid: str):
     if not m.authed(request):
         return m.unauthorized()
-    if not m.section_allowed(request, "hosts"):
+    if not section_allowed(request, "hosts"):
         return JSONResponse({"error": "Your account cannot open that section."}, status_code=403)
     if not m.db.host_row(hid):
         return JSONResponse({"error": "Host not found"}, status_code=404)
@@ -88,7 +88,7 @@ async def api_update_host(request: Request, hid: str):
 async def api_delete_host(request: Request, hid: str):
     if not m.authed(request):
         return m.unauthorized()
-    if not m.section_allowed(request, "hosts"):
+    if not section_allowed(request, "hosts"):
         return JSONResponse({"error": "Your account cannot open that section."}, status_code=403)
     ok = m.db.delete_host(hid)
     m.db.log(m.current_user(request), "host-remove", hid, ip=m.client_ip(request))
@@ -306,7 +306,7 @@ async def api_node_token_rotate(request: Request):
 async def api_list_nodes(request: Request):
     if not m.authed(request):
         return m.unauthorized()
-    if not m.section_allowed(request, "nodes"):
+    if not section_allowed(request, "nodes"):
         return JSONResponse({"error": "Your account cannot open that section."}, status_code=403)
     items = [node_view(r) for r in m.db.list_nodes()]
     return {"items": items, "remote_inbounds": node_inbounds(),
@@ -318,7 +318,7 @@ async def api_list_nodes(request: Request):
 async def api_add_node(request: Request):
     if not m.authed(request):
         return m.unauthorized()
-    if not m.section_allowed(request, "nodes"):
+    if not section_allowed(request, "nodes"):
         return JSONResponse({"error": "Your account cannot open that section."}, status_code=403)
     d = await request.json()
     url = str(d.get("url") or "")
@@ -452,7 +452,7 @@ async def api_bot_status(request: Request):
     """TL robot: is it configured, is it polling, what did it do last?"""
     if not m.authed(request):
         return m.unauthorized()
-    if not m.section_allowed(request, "bot"):
+    if not section_allowed(request, "bot"):
         return JSONResponse({"error": "Your account cannot open that section."}, status_code=403)
     if not m.is_owner(request):
         return JSONResponse({"error": "Owner only."}, status_code=403)
@@ -467,7 +467,7 @@ async def api_bot_save(request: Request):
     """Save the bot token + owner number id; the bot starts automatically."""
     if not m.authed(request):
         return m.unauthorized()
-    if not m.section_allowed(request, "bot"):
+    if not section_allowed(request, "bot"):
         return JSONResponse({"error": "Your account cannot open that section."}, status_code=403)
     if not m.is_owner(request):
         return JSONResponse({"error": "Owner only."}, status_code=403)
@@ -527,7 +527,7 @@ def links_all(entries, host, request) -> list:
         if m.protocol.clean_protocol(ib.get("protocol")) == "wireguard":
             continue
         remark = m.client_remark(cl) if not cl.get("is_inbound") else ""
-        links = m.protocol.link_list(m.link_inbound(ib, request), cl["uuid"], host,
+        links = m.protocol.link_list(link_inbound(ib, request), cl["uuid"], host,
                                    cl.get("clean_ips") or ib.get("clean_ips"),
                                    remark=remark, count=int(cl.get("config_count") or 2))
         for link in links:
@@ -538,3 +538,90 @@ def links_all(entries, host, request) -> list:
                 item["qr"] = m._qr_svg_markup(link)
             out.append(item)
     return out
+
+
+# ---------------------------------------------------------------- admin access scope
+SECTIONS = ("overview", "inbounds", "clients", "hosts", "nodes", "bot", "logs", "settings", "admins")
+
+
+def admin_scope(request: Request):
+    """(allowed inbound ids or None, allowed sections or None) for a non-owner admin.
+
+    None means "everything": the owner, or any admin whose access list is empty.
+    """
+    if m.is_owner(request):
+        return None, None
+    try:
+        prefs = m.db.get_prefs(m.current_user(request)) or {}
+    except Exception:  # noqa: BLE001
+        prefs = {}
+    ibs = {str(x) for x in (prefs.get("inbounds") or []) if x}
+    m.secs = {str(x) for x in (prefs.get("sections") or []) if x}
+    return (ibs or None), (m.secs or None)
+
+
+def section_allowed(request: Request, name: str) -> bool:
+    """May this admin use that panel section?"""
+    _, m.secs = admin_scope(request)
+    return m.secs is None or name in m.secs
+
+
+def inbound_allowed(request: Request, inbound_id: str) -> bool:
+    ibs, _ = admin_scope(request)
+    return ibs is None or str(inbound_id) in ibs
+
+
+def admin_dict(row) -> dict:
+    """An admin row plus the access lists they hold (empty = full access)."""
+    d = dict(row)
+    try:
+        prefs = m.db.get_prefs(d.get("username")) or {}
+    except Exception:  # noqa: BLE001
+        prefs = {}
+    d["inbounds"] = [str(x) for x in (prefs.get("inbounds") or [])]
+    d["sections"] = [str(x) for x in (prefs.get("sections") or [])]
+    d.pop("password_hash", None)
+    return d
+
+
+def save_access(username: str, d: dict) -> None:
+    """Persist which inbounds/sections an admin may use (part of their own prefs)."""
+    prefs = m.db.get_prefs(username) or {}
+    if "inbounds" in d:
+        prefs["inbounds"] = [str(x) for x in (d.get("inbounds") or []) if str(x)][:200]
+    if "sections" in d:
+        prefs["sections"] = [s for s in (d.get("sections") or []) if s in SECTIONS]
+    m.db.set_prefs(username, prefs)
+
+
+# ---------------------------------------------------------------- reality endpoint
+def reality_endpoint() -> tuple:
+    """The panel's raw-TCP public endpoint for Reality, if the owner configured one."""
+    host = str(m.db.setting("reality_host") or "").strip()
+    port = m.as_int(m.db.setting("reality_public_port"), 0, 0, 65535)
+    return host, port
+
+
+def link_inbound(ib: dict, request: Request) -> dict:
+    """A copy of the inbound that is safe to build client links from.
+
+    Reality cannot survive a TLS-terminating proxy, so when its address still points at the
+    panel's own HTTPS domain (or is empty) the configured raw-TCP endpoint is substituted.
+    """
+    ib = dict(ib)
+    if m.protocol.clean_protocol(ib.get("protocol")) == "wireguard":
+        return ib
+    if str(ib.get("security") or "").lower() != "reality":
+        return ib
+    host, port = reality_endpoint()
+    base = str(m.db.setting("public_base_url") or "")
+    panel_hosts = {str(m.effective_host(request) or "").lower(),
+                   base.replace("https://", "").replace("http://", "").split("/")[0].lower()}
+    addr = str(ib.get("address") or "").strip()
+    bare = addr.replace("https://", "").replace("http://", "").split("/")[0].lower()
+    if host and (not addr or addr.lower() in panel_hosts or bare in panel_hosts):
+        ib["address"] = host
+        ib["_reality_endpoint"] = True
+        if port:
+            ib["port"] = port
+    return ib
