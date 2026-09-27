@@ -76,7 +76,86 @@ def config_path() -> str:
     return path
 
 
-def build_config(inbounds, clients_by_inbound, base=None) -> dict:
+def _list(value) -> list:
+    if isinstance(value, list):
+        return [str(v) for v in value if str(v).strip()]
+    return [v.strip() for v in str(value or "").replace(",", "\n").splitlines() if v.strip()]
+
+
+def build_outbounds(rows) -> list:
+    """Turn the panel's Outbounds page into Xray outbounds (3x-ui style)."""
+    out = []
+    for r in rows or []:
+        if not int(r.get("enabled") or 0):
+            continue
+        proto = str(r.get("protocol") or "freedom").lower()
+        tag = str(r.get("tag") or proto)
+        addr = str(r.get("address") or "")
+        port = int(r.get("port") or 0)
+        if proto in ("freedom", "blackhole"):
+            out.append({"tag": tag, "protocol": proto,
+                        "settings": {"domainStrategy": "UseIPv4"} if proto == "freedom" else {}})
+            continue
+        if proto in ("socks", "http"):
+            servers = [{"address": addr, "port": port}]
+            if r.get("username"):
+                servers[0]["users"] = [{"user": r["username"], "pass": r.get("password") or ""}]
+            out.append({"tag": tag, "protocol": proto, "settings": {"servers": servers}})
+            continue
+        if proto == "shadowsocks":
+            out.append({"tag": tag, "protocol": "shadowsocks",
+                        "settings": {"servers": [{"address": addr, "port": port,
+                                                  "method": r.get("method") or "chacha20-ietf-poly1305",
+                                                  "password": r.get("password") or ""}]}})
+            continue
+        if proto in ("vless", "vmess", "trojan"):
+            user = {"encryption": "none"} if proto == "vless" else {}
+            user["id" if proto != "trojan" else "password"] = r.get("uuid") or r.get("password") or ""
+            out.append({"tag": tag, "protocol": proto,
+                        "settings": {"vnext" if proto != "trojan" else "servers":
+                                     [{"address": addr, "port": port, "users": [user]}]}})
+            continue
+        if proto == "wireguard":
+            out.append({"tag": tag, "protocol": "wireguard",
+                        "settings": {"secretKey": r.get("password") or "",
+                                     "address": [r.get("method") or "10.0.0.2/32"],
+                                     "peers": [{"publicKey": r.get("uuid") or "", "endpoint": f"{addr}:{port}"}]}})
+            continue
+        out.append({"tag": tag, "protocol": proto, "settings": {}})
+    return out
+
+
+def build_routes(rows) -> list:
+    """Turn the Routing page into Xray routing rules (checked before the defaults)."""
+    rules = []
+    for r in rows or []:
+        if not int(r.get("enabled") or 0):
+            continue
+        target = str(r.get("outbound_tag") or "") or ("block" if str(r.get("action")) == "block" else "direct")
+        rule = {"type": "field", "outboundTag": target}
+        dom = _list(r.get("domain"))
+        ips = _list(r.get("ip"))
+        ports = _list(r.get("port"))
+        nets = _list(r.get("network"))
+        protos = _list(r.get("protocols"))
+        if dom:
+            rule["domain"] = dom
+        if ips:
+            rule["ip"] = ips
+        if ports:
+            rule["port"] = ",".join(ports)
+        if nets:
+            rule["network"] = ",".join(nets)
+        if protos:
+            rule["protocol"] = protos
+        if r.get("inbound_tag"):
+            rule["inboundTag"] = _list(r.get("inbound_tag"))
+        if len(rule) > 2:                     # a rule with no matcher would swallow everything
+            rules.append(rule)
+    return rules
+
+
+def build_config(inbounds, clients_by_inbound, base=None, outbound_rows=None, route_rows=None) -> dict:
     """One local ws inbound per panel inbound, plus freedom/block outbounds."""
     import protocol
     base = base or base_port()
@@ -203,7 +282,7 @@ def build_config(inbounds, clients_by_inbound, base=None) -> dict:
             "disableFallback": False,
         },
         "inbounds": xs,
-        "outbounds": [
+        "outbounds": build_outbounds(outbound_rows) + [
             {"tag": "direct", "protocol": "freedom",
              "settings": {"domainStrategy": "UseIPv4"},
              "streamSettings": {"sockopt": {"tcpFastOpen": True, "tcpNoDelay": True}}},
@@ -211,7 +290,7 @@ def build_config(inbounds, clients_by_inbound, base=None) -> dict:
         ],
         "routing": {
             "domainStrategy": "AsIs",
-            "rules": [
+            "rules": build_routes(route_rows) + [
                 # QUIC/HTTP3 is UDP: the WebSocket tunnel carries TCP, so let browsers fall
                 # back to TCP+TLS instead of stalling on a UDP flow that cannot be relayed.
                 # This is what makes YouTube/Instagram/Telegram feel normal through the panel.
