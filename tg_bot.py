@@ -302,7 +302,7 @@ async def handle_command(text: str, chat_id) -> str:
 # Telegram has no button colours, so the green profile button is marked with a green
 # square instead: 🟩 پروفایل من. Everything is reachable by tapping - no typing commands.
 L = {
-    "fa": {"inbound": "اینباند", "status": "وضعیت", "enabled": "فعال", "disabled": "غیرفعال",
+    "fa": {"panel": "🌐 دسترسی به پنل", "inbound": "اینباند", "status": "وضعیت", "enabled": "فعال", "disabled": "غیرفعال",
            "name": "نام", "quota": "حجم (گیگ)", "reset": "صفر کردن مصرف", "link": "کانفیگ",
            "config": "📥 دریافت کانفیگ", "profile": "🟩 پروفایل من", "clients": "👥 کاربران",
            "inbounds": "📶 اینباندها", "hosts": "🗂 هاست‌ها", "nodes": "🛰 نودها",
@@ -315,7 +315,7 @@ L = {
            "ask_host": "آدرس هاست را بنویسید", "ask_node": "بنویسید: نام | آدرس‌پنل | توکن | کشور",
            "ask_admin": "بنویسید: نام‌کاربری | رمز", "done": "انجام شد", "usage": "مصرف شما",
            "self": "👤 پروفایل من"},
-    "en": {"inbound": "Inbound", "status": "Status", "enabled": "active", "disabled": "disabled",
+    "en": {"panel": "🌐 Access panel", "inbound": "Inbound", "status": "Status", "enabled": "active", "disabled": "disabled",
            "name": "Name", "quota": "Quota (GB)", "reset": "Reset usage", "link": "Config",
            "config": "📥 Get config", "profile": "🟩 My profile", "clients": "👥 Clients",
            "inbounds": "📶 Inbounds", "hosts": "🗂 Hosts", "nodes": "🛰 Nodes",
@@ -360,6 +360,7 @@ def main_keyboard(chat_id) -> dict:
                     {"text": tr(lg, "nodes"), "callback_data": "menu:nodes"}],
                    [{"text": tr(lg, "admins"), "callback_data": "menu:admins"},
                     {"text": tr(lg, "bot"), "callback_data": "menu:bot"}],
+                   [{"text": tr(lg, "panel"), "callback_data": "menu:panel"}],
                    [{"text": tr(lg, "lang"), "callback_data": "menu:lang"}]])
     return kb([[{"text": tr(lg, "config"), "callback_data": "act:get"}],
                [{"text": tr(lg, "profile"), "callback_data": "act:me"}]])
@@ -521,6 +522,17 @@ async def handle_callback(token: str, query: dict):
     text, markup = None, None
     if data == "menu:main":
         text, markup = main_text(chat_id), main_keyboard(chat_id)
+    elif data == "menu:panel":
+        lgx = _lang(chat_id)
+        host = str(_M.db.setting("public_base_url") or "").rstrip("/")
+        if not host:
+            host = _FakeRequest().base_url.rstrip("/")
+        text = (f"{tr(lgx, 'panel')}\n\n"
+                f"🏷 {_M.db.setting('panel_name', 'Dollax Panel')} v{_M.APP_VERSION}\n"
+                f"🔗 `{host}`\n"
+                f"🖥 `{host}/login`\n"
+                f"📡 `{host}/sub/<token>`")
+        markup = kb([[{"text": tr(lgx, "back"), "callback_data": "menu:main"}]])
     elif data == "menu:lang":
         text, markup = tr(_lang(chat_id), "lang"), lang_keyboard()
     elif data.startswith("lang:"):
