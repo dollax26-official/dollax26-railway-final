@@ -360,3 +360,12 @@ html[data-bg="on"] .tblwrap{backdrop-filter:blur(10px)}
 @media (max-width: 640px) { .tpl-grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); } }
 .tpl-pasarguard { background: linear-gradient(135deg, #2A1418, #0F1116 70%); color: #FFB4B4; }
 .tpl-xg { background: linear-gradient(135deg, #2563EB, #0B1120 75%); }
+
+/* ---- 3x-ui style JSON editors (Outbounds / Routing) ---- */
+.json-editor { width: 100%; min-height: 300px; resize: vertical; padding: 12px 14px;
+  border: 1px solid var(--line); border-radius: 10px; background: color-mix(in srgb, var(--card-bg) 82%, #000 18%);
+  color: var(--text); font-family: var(--mono); font-size: 12px; line-height: 1.55; tab-size: 2; }
+.json-editor:focus { outline: none; border-color: var(--accent); }
+.preset-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.btn.xs { padding: 4px 9px; font-size: 10.5px; border-radius: 7px; }
+@media (max-width: 640px) { .json-editor { min-height: 220px; font-size: 11px; } }
