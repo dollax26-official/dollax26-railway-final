@@ -315,6 +315,7 @@ MIGRATIONS = [
     ("inbounds", "reality_private_key", "TEXT NOT NULL DEFAULT ''"),
     ("inbounds", "reality_dest", "TEXT NOT NULL DEFAULT ''"),
     ("inbounds", "wg_public_key", "TEXT NOT NULL DEFAULT ''"),
+    ("inbounds", "wg_private_key", "TEXT NOT NULL DEFAULT ''"),
     ("inbounds", "wg_address", "TEXT NOT NULL DEFAULT ''"),
     ("clients", "created_by", "TEXT NOT NULL DEFAULT ''"),
     ("clients", "extra_inbounds", "TEXT NOT NULL DEFAULT '[]'"),
