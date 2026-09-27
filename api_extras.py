@@ -637,3 +637,84 @@ async def api_wg_keys(request: Request):
     priv, pub = m.protocol.wg_keypair()
     m.db.log(m.current_user(request), "wg-keygen", "", ip=m.client_ip(request))
     return {"ok": True, "private_key": priv, "public_key": pub}
+
+
+# ---------------------------------------------------------------- outbounds + routing
+@nodes.get("/api/outbounds")
+async def api_list_outbounds(request: Request):
+    if not m.authed(request):
+        return m.unauthorized()
+    if not m.is_owner(request):
+        return JSONResponse({"error": "Owner only."}, status_code=403)
+    return {"items": m.db.list_outbounds()}
+
+
+@nodes.post("/api/outbounds")
+async def api_add_outbound(request: Request):
+    if not m.authed(request):
+        return m.unauthorized()
+    if not m.is_owner(request):
+        return JSONResponse({"error": "Owner only."}, status_code=403)
+    d = await request.json()
+    oid = m.db.add_outbound(d)
+    m.db.log(m.current_user(request), "outbound-add", str(d.get("tag") or d.get("protocol") or ""),
+             ip=m.client_ip(request))
+    return {"ok": True, "id": oid, "items": m.db.list_outbounds()}
+
+
+@nodes.patch("/api/outbounds/{oid}")
+async def api_update_outbound(request: Request, oid: str):
+    if not m.authed(request) or not m.is_owner(request):
+        return JSONResponse({"error": "Owner only."}, status_code=403)
+    if not m.db.outbound_row(oid):
+        return JSONResponse({"error": "Outbound not found"}, status_code=404)
+    m.db.update_outbound(oid, await request.json())
+    return {"ok": True, "items": m.db.list_outbounds()}
+
+
+@nodes.delete("/api/outbounds/{oid}")
+async def api_delete_outbound(request: Request, oid: str):
+    if not m.authed(request) or not m.is_owner(request):
+        return JSONResponse({"error": "Owner only."}, status_code=403)
+    m.db.delete_outbound(oid)
+    m.db.log(m.current_user(request), "outbound-remove", oid, ip=m.client_ip(request))
+    return {"ok": True, "items": m.db.list_outbounds()}
+
+
+@nodes.get("/api/routes")
+async def api_list_routes(request: Request):
+    if not m.authed(request):
+        return m.unauthorized()
+    if not m.is_owner(request):
+        return JSONResponse({"error": "Owner only."}, status_code=403)
+    return {"items": m.db.list_routes()}
+
+
+@nodes.post("/api/routes")
+async def api_add_route(request: Request):
+    if not m.authed(request) or not m.is_owner(request):
+        return JSONResponse({"error": "Owner only."}, status_code=403)
+    d = await request.json()
+    rid = m.db.add_route(d)
+    m.db.log(m.current_user(request), "route-add", str(d.get("domain") or d.get("ip") or ""),
+             ip=m.client_ip(request))
+    return {"ok": True, "id": rid, "items": m.db.list_routes()}
+
+
+@nodes.patch("/api/routes/{rid}")
+async def api_update_route(request: Request, rid: str):
+    if not m.authed(request) or not m.is_owner(request):
+        return JSONResponse({"error": "Owner only."}, status_code=403)
+    if not m.db.route_row(rid):
+        return JSONResponse({"error": "Route not found"}, status_code=404)
+    m.db.update_route(rid, await request.json())
+    return {"ok": True, "items": m.db.list_routes()}
+
+
+@nodes.delete("/api/routes/{rid}")
+async def api_delete_route(request: Request, rid: str):
+    if not m.authed(request) or not m.is_owner(request):
+        return JSONResponse({"error": "Owner only."}, status_code=403)
+    m.db.delete_route(rid)
+    m.db.log(m.current_user(request), "route-remove", rid, ip=m.client_ip(request))
+    return {"ok": True, "items": m.db.list_routes()}
