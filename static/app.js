@@ -764,7 +764,8 @@ function navList() {
     ['clients', T('nav_clients'), '☰'], ['hosts', T('nav_hosts'), '⛁'],
     ['nodes', T('nav_nodes'), '⬢'], ['bot', T('nav_bot'), '🤖'], ['logs', T('nav_logs'), '≡']]
     .filter(([id]) => !allowed || allowed.includes(id));
-  if (isOwner()) items.push(['admins', T('nav_admins'), '★']);
+  if (isOwner()) items.push(['outbounds', T('nav_outbounds'), '⇄'],
+                            ['routing', T('nav_routes'), '⤳'], ['admins', T('nav_admins'), '★']);
   items.push(['settings', T('nav_settings'), '⚙']);
   return items.map(([p, label, ic]) =>
     `<button data-p="${p}" class="${S.page === p ? 'on' : ''}"><span class="ic">${ic}</span>${esc(label)}</button>`).join('');
@@ -806,11 +807,13 @@ function buildShell() {
 }
 
 function goto(page) {
-  const allowed = ['overview', 'inbounds', 'clients', 'hosts', 'nodes', 'bot', 'logs', 'settings'];
+  const allowed = ['overview', 'inbounds', 'clients', 'hosts', 'nodes', 'bot',
+                   'outbounds', 'routing', 'logs', 'settings'];
   if (page === 'admins' && !isOwner()) page = 'overview';
   S.page = allowed.concat(['admins']).includes(page) ? page : 'overview';
   const titles = { overview: T('nav_overview'), inbounds: T('nav_inbounds'), clients: T('nav_clients'),
-    hosts: T('nav_hosts'), nodes: T('nav_nodes'), bot: T('nav_bot'), logs: T('nav_logs'), admins: T('nav_admins'),
+    hosts: T('nav_hosts'), nodes: T('nav_nodes'), bot: T('nav_bot'), logs: T('nav_logs'),
+    outbounds: T('nav_outbounds'), routing: T('nav_routes'), admins: T('nav_admins'),
     settings: T('nav_settings') };
   $('pageTitle').textContent = titles[S.page];
   $$('#nav button').forEach((b) => b.classList.toggle('on', b.dataset.p === S.page));
@@ -837,6 +840,8 @@ async function loadAll() {
   try { const hs = await api('GET', '/api/hosts'); S.hosts = hs.items || []; }
   catch (e) { S.hosts = S.hosts || []; }
   try { S.bot = await api('GET', '/api/bot'); } catch (e) { S.bot = S.bot || {}; }
+  try { S.outbounds = (await api('GET', '/api/outbounds')).items || []; } catch (e) { S.outbounds = S.outbounds || []; }
+  try { S.routes = (await api('GET', '/api/routes')).items || []; } catch (e) { S.routes = S.routes || []; }
   S.bgPresets = (backgrounds && backgrounds.presets) || [];
   S.bgCustom = !!(backgrounds && backgrounds.custom);
   S.me = me;
@@ -879,6 +884,8 @@ function render() {
   else if (S.page === 'clients') { if (needPage(T('nav_clients'), pageClients)) pageClients(page); }
   else if (S.page === 'hosts') { if (needPage(T('nav_hosts'), pageHosts)) pageHosts(page); }
   else if (S.page === 'bot') { if (needPage(T('nav_bot'), pageBot)) pageBot(page); }
+  else if (S.page === 'outbounds') { if (needPage(T('nav_outbounds'), pageOutbounds)) pageOutbounds(page); }
+  else if (S.page === 'routing') { if (needPage(T('nav_routes'), pageRouting)) pageRouting(page); }
   else if (S.page === 'nodes') { if (needPage(T('nav_nodes'), pageNodes)) pageNodes(page); }
   else if (S.page === 'logs') { if (needPage(T('nav_logs'), pageLogs)) pageLogs(page); }
   else if (S.page === 'admins') { if (needPage(T('nav_admins'), pageAdmins)) pageAdmins(page); }
@@ -1158,6 +1165,17 @@ function openBuilder(ib) {
   openModal(editing ? T('editInbound') : T('createInbound'), body);
   $('bCancel').onclick = closeModal;
   $('bSave').onclick = () => saveInbound(editing ? ib.id : null);
+  if ($('bGenKeys')) $('bGenKeys').onclick = async () => {
+    const btn = $('bGenKeys');
+    btn.disabled = true;
+    try {
+      const r = await api('POST', '/api/keys/wg');
+      if ($('bWgPriv')) $('bWgPriv').value = r.private_key || '';
+      if ($('bWgPub')) $('bWgPub').value = r.public_key || '';
+      toast(T('keysGenerated'), 'ok');
+    } catch (e) { toast(e.message, 'bad'); }
+    btn.disabled = false;
+  };
   if ($('bUsePanel')) $('bUsePanel').onclick = () => {
     $('bAddress').value = panelHost;
     if ($('bHost')) $('bHost').value = panelHost;
