@@ -840,8 +840,6 @@ async function loadAll() {
   try { const hs = await api('GET', '/api/hosts'); S.hosts = hs.items || []; }
   catch (e) { S.hosts = S.hosts || []; }
   try { S.bot = await api('GET', '/api/bot'); } catch (e) { S.bot = S.bot || {}; }
-  try { S.outbounds = (await api('GET', '/api/outbounds')).items || []; } catch (e) { S.outbounds = S.outbounds || []; }
-  try { S.routes = (await api('GET', '/api/routes')).items || []; } catch (e) { S.routes = S.routes || []; }
   S.bgPresets = (backgrounds && backgrounds.presets) || [];
   S.bgCustom = !!(backgrounds && backgrounds.custom);
   S.me = me;
