@@ -303,8 +303,8 @@ def build_config(inbounds, clients_by_inbound, base=None, outbound_rows=None, ro
     return cfg, port_map
 
 
-def write_config(inbounds, clients_by_inbound) -> dict:
-    cfg, port_map = build_config(inbounds, clients_by_inbound)
+def write_config(inbounds, clients_by_inbound, outbound_rows=None, route_rows=None) -> dict:
+    cfg, port_map = build_config(inbounds, clients_by_inbound, None, outbound_rows, route_rows)
     path = config_path()
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = path + ".tmp"
@@ -315,14 +315,15 @@ def write_config(inbounds, clients_by_inbound) -> dict:
     return {"config": cfg, "port_map": port_map, "path": path}
 
 
-def start(inbounds, clients_by_inbound) -> dict:
+def start(inbounds, clients_by_inbound, outbound_rows=None, route_rows=None) -> dict:
     """Write the config and (re)start the Xray process. Safe to call repeatedly."""
     with _lock:
         if not enabled():
             STATE["last_error"] = ("XRAY_MODE=off" if STATE["mode"] == "off"
                                    else "xray binary not found in PATH")
             return {"ok": False, "running": False, "reason": STATE["last_error"]}
-        info = write_config(inbounds, clients_by_inbound)
+        info = write_config(inbounds, clients_by_inbound, outbound_rows=outbound_rows,
+                             route_rows=route_rows)
         proc = STATE.get("proc")
         if proc and proc.poll() is None:
             try:
