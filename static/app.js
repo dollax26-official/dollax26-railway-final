@@ -63,6 +63,8 @@ const I18N = {
     failed: 'Failed',
     xrayNote: 'Xray-core ships inside the Docker image and is restarted automatically when inbounds change.',
     wgPublicKey: 'WG server public key', wgAddress: 'WG peer address',
+    wgPrivateKey: 'WG server private key', wgPrivHint: 'kept on the panel',
+    genKeys: '🔑 Generate keys', keysGenerated: 'Keys generated',
     editClient: 'Edit client',
     expiresAt: 'Expires exactly at (date & time)',
     subLinks: 'Sub links',
@@ -1117,7 +1119,11 @@ function openBuilder(ib) {
       <label class="field" id="grpPath"><span>${T('fPath')}</span><input id="bPath" value="${esc(b.path || '')}" placeholder="/ws/x (empty = auto)"></label>
       <label class="field" id="grpHost"><span>${T('fHost')}</span><input id="bHost" value="${esc(b.host_header || '')}" placeholder="empty = address"></label>
       <label class="field" id="grpSni"><span>${T('fSni')}</span><input id="bSni" value="${esc(b.sni || '')}" placeholder="empty = host"></label>
-      <label class="field" id="grpWgPub"><span>${T('wgPublicKey')}</span><input id="bWgPub" value="${esc(b.wg_public_key || '')}" placeholder="server public key"></label>
+      <label class="field" id="grpWgPub"><span>${T('wgPublicKey')}</span>
+        <span class="inline-input"><input id="bWgPub" value="${esc(b.wg_public_key || '')}" placeholder="server public key">
+        <button class="btn sm" type="button" id="bGenKeys">${T('genKeys')}</button></span></label>
+      <label class="field" id="grpWgPriv"><span>${T('wgPrivateKey')}</span>
+        <input id="bWgPriv" value="${esc(b.wg_private_key || '')}" placeholder="${T('wgPrivHint')}"></label>
       <label class="field" id="grpWgAddr"><span>${T('wgAddress')}</span><input id="bWgAddr" value="${esc(b.wg_address || '')}" placeholder="10.7.0.2/32"></label>
       </div>
     <div class="field" style="margin-top:12px"><span>${T('hostsForInbound')}</span>
@@ -1159,7 +1165,7 @@ function openBuilder(ib) {
     syncBuilder();
   };
   ['bName', 'bAddress', 'bPort', 'bPath', 'bHost', 'bSni', 'bConfigCount', 'bDays', 'bLimitGb',
-   'bProto', 'bNet', 'bSec', 'bFp', 'bWgPub', 'bWgAddr'].forEach((id) => {
+   'bProto', 'bNet', 'bSec', 'bFp', 'bWgPub', 'bWgAddr', 'bWgPriv'].forEach((id) => {
     const el = $(id);
     if (el) el.addEventListener(el.tagName === 'SELECT' ? 'change' : 'input', syncBuilder);
   });
@@ -1177,6 +1183,7 @@ function syncBuilder() {
   show('grpSni', sec !== 'none' && net !== 'xhttp');
   const proto = ($('bProto') || {}).value || 'vless';
   show('grpWgPub', proto === 'wireguard');
+  show('grpWgPriv', proto === 'wireguard');
   show('grpWgAddr', proto === 'wireguard');
   const w = $('bWarn');
   if (w) {
@@ -1199,7 +1206,7 @@ function builderPayload() {
     name: g('bName'), protocol: g('bProto'), network: g('bNet'), security: g('bSec'),
     address: g('bAddress'), port: g('bPort'), path: g('bPath'), fingerprint: g('bFp'),
     host_header: g('bHost'), sni: g('bSni'),
-    wg_public_key: g('bWgPub'), wg_address: g('bWgAddr'),
+    wg_public_key: g('bWgPub'), wg_private_key: g('bWgPriv'), wg_address: g('bWgAddr'),
     hosts: $$('#bHosts input:checked').map((el) => el.value),
     limit_value: g('bLimitGb'), expires_days: g('bDays'),
     client_limit: g('bClientLimit'), config_count: g('bConfigCount'),
