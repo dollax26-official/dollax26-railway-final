@@ -240,6 +240,33 @@ CREATE TABLE IF NOT EXISTS tracks(
   size INTEGER NOT NULL DEFAULT 0,
   created TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS outbounds(
+  id TEXT PRIMARY KEY,
+  tag TEXT NOT NULL DEFAULT '',
+  protocol TEXT NOT NULL DEFAULT 'freedom',
+  address TEXT NOT NULL DEFAULT '',
+  port INTEGER NOT NULL DEFAULT 0,
+  username TEXT NOT NULL DEFAULT '',
+  password TEXT NOT NULL DEFAULT '',
+  method TEXT NOT NULL DEFAULT '',
+  uuid TEXT NOT NULL DEFAULT '',
+  extra TEXT NOT NULL DEFAULT '',
+  enabled INTEGER NOT NULL DEFAULT 1,
+  created TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS routes(
+  id TEXT PRIMARY KEY,
+  action TEXT NOT NULL DEFAULT 'direct',
+  inbound_tag TEXT NOT NULL DEFAULT '',
+  domain TEXT NOT NULL DEFAULT '',
+  ip TEXT NOT NULL DEFAULT '',
+  port TEXT NOT NULL DEFAULT '',
+  network TEXT NOT NULL DEFAULT '',
+  protocols TEXT NOT NULL DEFAULT '',
+  outbound_tag TEXT NOT NULL DEFAULT '',
+  enabled INTEGER NOT NULL DEFAULT 1,
+  created TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS hosts(
   id TEXT PRIMARY KEY,
   address TEXT NOT NULL,
@@ -579,6 +606,110 @@ def delete_track(username, tid) -> bool:
         c.commit()
         return cur.rowcount > 0
 
+
+
+
+# ---------------------------------------------------------------- outbounds + routes
+def list_outbounds():
+    with conn() as c:
+        return [dict(r) for r in c.execute("SELECT * FROM outbounds ORDER BY created").fetchall()]
+
+
+def add_outbound(fields: dict) -> str:
+    oid = secrets.token_hex(8)
+    with _write_lock, conn() as c:
+        c.execute("INSERT INTO outbounds(id,tag,protocol,address,port,username,password,method,uuid,extra,"
+                  "enabled,created) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                  (oid, str(fields.get("tag") or "")[:40], str(fields.get("protocol") or "freedom")[:24],
+                   str(fields.get("address") or "")[:200], int(fields.get("port") or 0),
+                   str(fields.get("username") or "")[:120], str(fields.get("password") or "")[:200],
+                   str(fields.get("method") or "")[:40], str(fields.get("uuid") or "")[:80],
+                   str(fields.get("extra") or "")[:400], 1 if fields.get("enabled", True) else 0, now()))
+        c.commit()
+    return oid
+
+
+def outbound_row(oid):
+    with conn() as c:
+        return c.execute("SELECT * FROM outbounds WHERE id=?", (oid,)).fetchone()
+
+
+def update_outbound(oid, fields: dict) -> bool:
+    allowed = ("tag", "protocol", "address", "port", "username", "password", "method", "uuid", "extra", "enabled")
+    sets, vals = [], []
+    for k in allowed:
+        if k in fields:
+            v = fields[k]
+            if k == "enabled":
+                v = 1 if v else 0
+            if k == "port":
+                v = int(v or 0)
+            sets.append(f"{k}=?")
+            vals.append(v)
+    if not sets:
+        return False
+    vals.append(oid)
+    with _write_lock, conn() as c:
+        cur = c.execute(f"UPDATE outbounds SET {', '.join(sets)} WHERE id=?", vals)
+        c.commit()
+        return cur.rowcount > 0
+
+
+def delete_outbound(oid) -> bool:
+    with _write_lock, conn() as c:
+        cur = c.execute("DELETE FROM outbounds WHERE id=?", (oid,))
+        c.commit()
+        return cur.rowcount > 0
+
+
+def list_routes():
+    with conn() as c:
+        return [dict(r) for r in c.execute("SELECT * FROM routes ORDER BY created").fetchall()]
+
+
+def add_route(fields: dict) -> str:
+    rid = secrets.token_hex(8)
+    with _write_lock, conn() as c:
+        c.execute("INSERT INTO routes(id,action,inbound_tag,domain,ip,port,network,protocols,outbound_tag,"
+                  "enabled,created) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                  (rid, str(fields.get("action") or "direct")[:20], str(fields.get("inbound_tag") or "")[:60],
+                   str(fields.get("domain") or "")[:400], str(fields.get("ip") or "")[:400],
+                   str(fields.get("port") or "")[:60], str(fields.get("network") or "")[:20],
+                   str(fields.get("protocols") or "")[:120], str(fields.get("outbound_tag") or "")[:60],
+                   1 if fields.get("enabled", True) else 0, now()))
+        c.commit()
+    return rid
+
+
+def route_row(rid):
+    with conn() as c:
+        return c.execute("SELECT * FROM routes WHERE id=?", (rid,)).fetchone()
+
+
+def update_route(rid, fields: dict) -> bool:
+    allowed = ("action", "inbound_tag", "domain", "ip", "port", "network", "protocols", "outbound_tag", "enabled")
+    sets, vals = [], []
+    for k in allowed:
+        if k in fields:
+            v = fields[k]
+            if k == "enabled":
+                v = 1 if v else 0
+            sets.append(f"{k}=?")
+            vals.append(v)
+    if not sets:
+        return False
+    vals.append(rid)
+    with _write_lock, conn() as c:
+        cur = c.execute(f"UPDATE routes SET {', '.join(sets)} WHERE id=?", vals)
+        c.commit()
+        return cur.rowcount > 0
+
+
+def delete_route(rid) -> bool:
+    with _write_lock, conn() as c:
+        cur = c.execute("DELETE FROM routes WHERE id=?", (rid,))
+        c.commit()
+        return cur.rowcount > 0
 
 
 # ---------------------------------------------------------------- hosts (address pool)
