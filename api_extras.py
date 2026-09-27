@@ -718,3 +718,111 @@ async def api_delete_route(request: Request, rid: str):
     m.db.delete_route(rid)
     m.db.log(m.current_user(request), "route-remove", rid, ip=m.client_ip(request))
     return {"ok": True, "items": m.db.list_routes()}
+
+
+# ---------------------------------------------------------------- 3x-ui style JSON outbounds/routing
+OUTBOUND_PRESETS = {
+    "freedom": {"tag": "direct-2", "protocol": "freedom", "settings": {"domainStrategy": "UseIPv4"}},
+    "blackhole": {"tag": "block-2", "protocol": "blackhole", "settings": {}},
+    "dns": {"tag": "dns-out", "protocol": "dns", "settings": {}},
+    "socks": {"tag": "socks-out", "protocol": "socks",
+              "settings": {"servers": [{"address": "127.0.0.1", "port": 1080}]}},
+    "http": {"tag": "http-out", "protocol": "http",
+             "settings": {"servers": [{"address": "127.0.0.1", "port": 8080}]}},
+    "shadowsocks": {"tag": "ss-out", "protocol": "shadowsocks",
+                    "settings": {"servers": [{"address": "", "port": 8388,
+                                              "method": "chacha20-ietf-poly1305", "password": ""}]}},
+    "vless": {"tag": "vless-out", "protocol": "vless",
+              "settings": {"vnext": [{"address": "", "port": 443, "users": [{"id": "", "encryption": "none"}]}]},
+              "streamSettings": {"network": "tcp", "security": "tls"}},
+    "vmess": {"tag": "vmess-out", "protocol": "vmess",
+              "settings": {"vnext": [{"address": "", "port": 443, "users": [{"id": "", "alterId": 0}]}]}},
+    "trojan": {"tag": "trojan-out", "protocol": "trojan",
+               "settings": {"servers": [{"address": "", "port": 443, "password": ""}]}},
+    "wireguard": {"tag": "wg-out", "protocol": "wireguard",
+                  "settings": {"secretKey": "", "address": ["10.0.0.2/32"],
+                               "peers": [{"publicKey": "", "endpoint": "1.2.3.4:51820"}]}},
+}
+ROUTE_PRESETS = {
+    "block-ads": {"type": "field", "outboundTag": "block",
+                  "domain": ["geosite:category-ads-all"]},
+    "block-quic": {"type": "field", "outboundTag": "block", "network": "udp", "port": "443"},
+    "block-bittorrent": {"type": "field", "outboundTag": "block", "protocol": ["bittorrent"]},
+    "iran-direct": {"type": "field", "outboundTag": "direct",
+                    "domain": ["geosite:category-ir"], "ip": ["geoip:ir"]},
+    "private-block": {"type": "field", "outboundTag": "block", "ip": ["geoip:private"]},
+    "custom-proxy": {"type": "field", "outboundTag": "proxy-1", "domain": ["openai.com"]},
+}
+
+
+def _effective_parts():
+    """What the core would use right now: (outbounds, routing rules)."""
+    inbounds = [dict(r) for r in m.db.list_inbounds()]
+    clients = {i["id"]: [dict(c) for c in m.db.clients_for_inbound(i["id"])] for i in inbounds}
+    cfg, _ = m.xray_core.build_config(inbounds, clients, None, m.db.list_outbounds(), m.db.list_routes(),
+                                      m.db.setting("outbounds_json"), m.db.setting("routing_json"))
+    return cfg.get("outbounds") or [], ((cfg.get("routing") or {}).get("rules") or [])
+
+
+@nodes.get("/api/xray/outbounds-json")
+async def api_outbounds_json(request: Request):
+    """The Outbounds editor: current JSON plus the insertable presets (3x-ui style)."""
+    if not m.authed(request) or not m.is_owner(request):
+        return JSONResponse({"error": "Owner only."}, status_code=403)
+    stored = m.db.setting("outbounds_json")
+    eff = json.dumps(_effective_parts()[0], indent=2)
+    current = stored or eff
+    return {"json": current, "stored": bool(stored), "presets": OUTBOUND_PRESETS,
+            "effective": eff}
+
+
+@nodes.post("/api/xray/outbounds-json")
+async def api_save_outbounds_json(request: Request):
+    if not m.authed(request) or not m.is_owner(request):
+        return JSONResponse({"error": "Owner only."}, status_code=403)
+    d = await request.json()
+    txt = str(d.get("json") or "").strip()
+    if txt:
+        try:
+            val = json.loads(txt)
+        except Exception as exc:  # noqa: BLE001
+            return JSONResponse({"error": "Invalid JSON: " + str(exc)[:120]}, status_code=400)
+        if not isinstance(val, list):
+            return JSONResponse({"error": "Outbounds must be a JSON array."}, status_code=400)
+    m.db.set_setting("outbounds_json", txt[:20000])
+    m.db.log(m.current_user(request), "outbounds-json", "saved" if txt else "cleared",
+             ip=m.client_ip(request))
+    res = await asyncio.to_thread(m._xray_restart) if hasattr(m, "_xray_restart") else {"ok": False}
+    return {"ok": True, "restarted": bool(res.get("ok")), "hint": res.get("reason") or ""}
+
+
+@nodes.get("/api/xray/routing-json")
+async def api_routing_json(request: Request):
+    """The Routing editor: current rules JSON plus the insertable presets."""
+    if not m.authed(request) or not m.is_owner(request):
+        return JSONResponse({"error": "Owner only."}, status_code=403)
+    stored = m.db.setting("routing_json")
+    eff = json.dumps(_effective_parts()[1], indent=2)
+    current = stored or eff
+    return {"json": current, "stored": bool(stored), "presets": ROUTE_PRESETS,
+            "effective": eff}
+
+
+@nodes.post("/api/xray/routing-json")
+async def api_save_routing_json(request: Request):
+    if not m.authed(request) or not m.is_owner(request):
+        return JSONResponse({"error": "Owner only."}, status_code=403)
+    d = await request.json()
+    txt = str(d.get("json") or "").strip()
+    if txt:
+        try:
+            val = json.loads(txt)
+        except Exception as exc:  # noqa: BLE001
+            return JSONResponse({"error": "Invalid JSON: " + str(exc)[:120]}, status_code=400)
+        if not isinstance(val, list):
+            return JSONResponse({"error": "Routing rules must be a JSON array."}, status_code=400)
+    m.db.set_setting("routing_json", txt[:20000])
+    m.db.log(m.current_user(request), "routing-json", "saved" if txt else "cleared",
+             ip=m.client_ip(request))
+    res = await asyncio.to_thread(m._xray_restart) if hasattr(m, "_xray_restart") else {"ok": False}
+    return {"ok": True, "restarted": bool(res.get("ok")), "hint": res.get("reason") or ""}
