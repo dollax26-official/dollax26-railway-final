@@ -130,7 +130,8 @@ async def _xray_boot():
 
 def _xray_start_now():
     inbounds = _xray_inbounds()
-    return xray_core.start(inbounds, _xray_clients(inbounds))
+    return xray_core.start(inbounds, _xray_clients(inbounds),
+                           outbound_rows=db.list_outbounds(), route_rows=db.list_routes())
 
 
 @asynccontextmanager
@@ -1835,6 +1836,11 @@ def _xray_fingerprint():
         parts.append("|".join(str(ib.get(k) or "") for k in keys))
         for c in _xray_clients([ib]).get(ib["id"], []):
             parts.append("   " + "|".join(str(c.get(k) or "") for k in ("uuid", "enabled", "expires_at")))
+    try:
+        parts.append("|".join(str(o.get(k) or "") for o in db.list_outbounds() for k in ("tag", "protocol", "enabled")))
+        parts.append("|".join(str(r.get(k) or "") for r in db.list_routes() for k in ("domain", "ip", "outbound_tag", "enabled")))
+    except Exception:  # noqa: BLE001
+        pass
     return hashlib.sha256("\n".join(parts).encode()).hexdigest()
 
 
@@ -2045,9 +2051,12 @@ if __name__ == "__main__":
     # Safety net: some platform setups route the public domain to a target port that does not
     # match the PORT they inject. Serving on both means the proxy always finds us. Two uvicorn
     # processes share the same SQLite DB (WAL) and the same generated config.
+    # Optional second listener. Off by default: the platform injects the port it routes to,
+    # and a second copy of the app would also start a second Telegram poller and Xray watcher.
+    # Set DOLLAX_EXTRA_PORT=1 only if your proxy targets a fixed port other than $PORT.
     _ports = _port_candidates()
     _primary = _ports[0]
-    _extra = 8080 if (_primary != 8080 and os.getenv("DOLLAX_SINGLE_PORT") != "1") else None
+    _extra = 8080 if (os.getenv("DOLLAX_EXTRA_PORT") == "1" and _primary != 8080) else None
     if _extra:
         import threading
         def _extra_server():
