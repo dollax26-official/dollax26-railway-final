@@ -2051,12 +2051,13 @@ if __name__ == "__main__":
     # Safety net: some platform setups route the public domain to a target port that does not
     # match the PORT they inject. Serving on both means the proxy always finds us. Two uvicorn
     # processes share the same SQLite DB (WAL) and the same generated config.
-    # Optional second listener. Off by default: the platform injects the port it routes to,
-    # and a second copy of the app would also start a second Telegram poller and Xray watcher.
-    # Set DOLLAX_EXTRA_PORT=1 only if your proxy targets a fixed port other than $PORT.
+    # Safety net again by default: some platform setups route the public domain to a target
+    # port that does not match the injected PORT. Serving on both keeps the proxy happy;
+    # the Telegram poller guards itself with a single-instance lock, so only one copy talks
+    # to Telegram. Set DOLLAX_SINGLE_PORT=1 to run exactly one listener.
     _ports = _port_candidates()
     _primary = _ports[0]
-    _extra = 8080 if (os.getenv("DOLLAX_EXTRA_PORT") == "1" and _primary != 8080) else None
+    _extra = 8080 if (_primary != 8080 and os.getenv("DOLLAX_SINGLE_PORT") != "1") else None
     if _extra:
         import threading
         def _extra_server():
