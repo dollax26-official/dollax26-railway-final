@@ -166,6 +166,26 @@ def finalise_keys(fields: dict) -> dict:
             fields["wg_private_key"] = priv2
             fields["wg_public_key"] = pub2
 
+    if str(fields.get("security") or "").lower() == "reality":
+        priv = str(fields.get("reality_private_key") or "")
+        if not priv:
+            priv, pub = new_reality_keys()
+            fields["reality_private_key"] = priv
+            fields["reality_public_key"] = pub
+        else:
+            fields["reality_public_key"] = public_from_private(priv) or str(fields.get("reality_public_key") or "")
+        if not str(fields.get("reality_short_id") or ""):
+            fields["reality_short_id"] = new_short_id()
+        if not str(fields.get("sni") or ""):
+            fields["sni"] = "www.microsoft.com"
+        if str(fields.get("network") or "ws").lower() in ("tcp", "raw") and not str(fields.get("flow") or ""):
+            fields["flow"] = "xtls-rprx-vision"
+        if not str(fields.get("reality_dest") or ""):
+            fields["reality_dest"] = str(fields["sni"]) + ":443"
+        if not str(fields.get("reality_spider_x") or ""):
+            fields["reality_spider_x"] = "/"
+    return fields
+
 
 def wg_keypair():
     """A fresh X25519 pair for WireGuard (the same curve Reality uses)."""
