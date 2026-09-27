@@ -625,3 +625,15 @@ def link_inbound(ib: dict, request: Request) -> dict:
         if port:
             ib["port"] = port
     return ib
+
+
+@nodes.post("/api/keys/wg")
+async def api_wg_keys(request: Request):
+    """Generate a fresh X25519 keypair for a WireGuard (or similar) inbound."""
+    if not m.authed(request):
+        return m.unauthorized()
+    if not section_allowed(request, "inbounds"):
+        return JSONResponse({"error": "Your account cannot open that section."}, status_code=403)
+    priv, pub = m.protocol.wg_keypair()
+    m.db.log(m.current_user(request), "wg-keygen", "", ip=m.client_ip(request))
+    return {"ok": True, "private_key": priv, "public_key": pub}
