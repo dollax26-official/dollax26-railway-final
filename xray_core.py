@@ -76,6 +76,18 @@ def config_path() -> str:
     return path
 
 
+def json_or_none(raw):
+    """Parse a stored JSON fragment; None when empty/invalid (then the rows are used)."""
+    txt = str(raw or "").strip()
+    if not txt:
+        return None
+    try:
+        val = json.loads(txt)
+    except Exception:  # noqa: BLE001
+        return None
+    return val if isinstance(val, list) else None
+
+
 def _list(value) -> list:
     if isinstance(value, list):
         return [str(v) for v in value if str(v).strip()]
@@ -155,7 +167,8 @@ def build_routes(rows) -> list:
     return rules
 
 
-def build_config(inbounds, clients_by_inbound, base=None, outbound_rows=None, route_rows=None) -> dict:
+def build_config(inbounds, clients_by_inbound, base=None, outbound_rows=None, route_rows=None,
+                 outbounds_json=None, routing_json=None) -> dict:
     """One local ws inbound per panel inbound, plus freedom/block outbounds."""
     import protocol
     base = base or base_port()
@@ -282,7 +295,7 @@ def build_config(inbounds, clients_by_inbound, base=None, outbound_rows=None, ro
             "disableFallback": False,
         },
         "inbounds": xs,
-        "outbounds": build_outbounds(outbound_rows) + [
+        "outbounds": (json_or_none(outbounds_json) or build_outbounds(outbound_rows)) + [
             {"tag": "direct", "protocol": "freedom",
              "settings": {"domainStrategy": "UseIPv4"},
              "streamSettings": {"sockopt": {"tcpFastOpen": True, "tcpNoDelay": True}}},
@@ -290,7 +303,7 @@ def build_config(inbounds, clients_by_inbound, base=None, outbound_rows=None, ro
         ],
         "routing": {
             "domainStrategy": "AsIs",
-            "rules": build_routes(route_rows) + [
+            "rules": (json_or_none(routing_json) or build_routes(route_rows)) + [
                 # QUIC/HTTP3 is UDP: the WebSocket tunnel carries TCP, so let browsers fall
                 # back to TCP+TLS instead of stalling on a UDP flow that cannot be relayed.
                 # This is what makes YouTube/Instagram/Telegram feel normal through the panel.
@@ -303,8 +316,10 @@ def build_config(inbounds, clients_by_inbound, base=None, outbound_rows=None, ro
     return cfg, port_map
 
 
-def write_config(inbounds, clients_by_inbound, outbound_rows=None, route_rows=None) -> dict:
-    cfg, port_map = build_config(inbounds, clients_by_inbound, None, outbound_rows, route_rows)
+def write_config(inbounds, clients_by_inbound, outbound_rows=None, route_rows=None,
+                 outbounds_json=None, routing_json=None) -> dict:
+    cfg, port_map = build_config(inbounds, clients_by_inbound, None, outbound_rows, route_rows,
+                                 outbounds_json, routing_json)
     path = config_path()
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = path + ".tmp"
@@ -315,7 +330,8 @@ def write_config(inbounds, clients_by_inbound, outbound_rows=None, route_rows=No
     return {"config": cfg, "port_map": port_map, "path": path}
 
 
-def start(inbounds, clients_by_inbound, outbound_rows=None, route_rows=None) -> dict:
+def start(inbounds, clients_by_inbound, outbound_rows=None, route_rows=None,
+          outbounds_json=None, routing_json=None) -> dict:
     """Write the config and (re)start the Xray process. Safe to call repeatedly."""
     with _lock:
         if not enabled():
@@ -323,7 +339,8 @@ def start(inbounds, clients_by_inbound, outbound_rows=None, route_rows=None) -> 
                                    else "xray binary not found in PATH")
             return {"ok": False, "running": False, "reason": STATE["last_error"]}
         info = write_config(inbounds, clients_by_inbound, outbound_rows=outbound_rows,
-                             route_rows=route_rows)
+                             route_rows=route_rows, outbounds_json=outbounds_json,
+                             routing_json=routing_json)
         proc = STATE.get("proc")
         if proc and proc.poll() is None:
             try:
