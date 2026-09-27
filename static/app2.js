@@ -79,6 +79,144 @@ async function clientAction(act, id) {
   }
 }
 
+/* ------------------------------------------------------------------ outbounds */
+async function pageOutbounds(view) {
+  const rows = S.outbounds || [];
+  view.innerHTML = `
+    <div class="notice">${T('outboundsNote')}</div>
+    <div class="toolbar"><button class="btn primary" id="obAdd">${T('addOutbound')}</button>
+      <span class="muted" style="font-size:10px">${T('obHint')}</span>
+      <span class="grow"></span><button class="btn sm" id="obRefresh">${T('refresh')}</button></div>
+    <div class="tblwrap">
+      ${rows.length ? `<table><thead><tr><th>${T('obTag')}</th><th>${T('obProto')}</th><th>${T('obAddress')}</th>
+        <th>${T('status')}</th><th>${T('actions')}</th></tr></thead><tbody>
+        ${rows.map((o) => `<tr><td><b>${esc(o.tag || '')}</b></td><td>${esc(o.protocol)}</td>
+          <td class="muted">${esc(o.address || '')}${o.port ? ':' + esc(String(o.port)) : ''}</td>
+          <td><span class="badge ${o.enabled ? 'ok' : ''}">${o.enabled ? T('enabled') : T('disabled')}</span></td>
+          <td class="num" style="white-space:nowrap">
+            <button class="btn sm" data-obact="toggle" data-id="${esc(o.id)}">${o.enabled ? T('disable') : T('enable')}</button>
+            <button class="btn sm danger" data-obact="del" data-id="${esc(o.id)}">${T('del')}</button></td></tr>`).join('')}
+        </tbody></table>` : `<div class="empty">${T('noOutbounds')}</div>`}
+    </div>`;
+  if ($('obRefresh')) $('obRefresh').onclick = () => pageOutbounds(view);
+  if ($('obAdd')) $('obAdd').onclick = () => outboundModal();
+  $$('[data-obact]').forEach((b) => (b.onclick = async () => {
+    const id = b.dataset.id;
+    try {
+      if (b.dataset.obact === 'toggle') {
+        const o = (S.outbounds || []).find((x) => x.id === id) || {};
+        await api('PATCH', '/api/outbounds/' + id, { enabled: !o.enabled });
+      } else {
+        if (!(await confirmAsync(T('confirmDelete')))) return;
+        await api('DELETE', '/api/outbounds/' + id);
+      }
+      await loadAll();
+      goto('outbounds');
+    } catch (e) { toast(e.message, 'bad'); }
+  }));
+}
+
+function outboundModal() {
+  openModal(T('addOutbound'), `
+    <div class="form-grid">
+      <label class="field"><span>${T('obTag')}</span><input id="oTag" placeholder="proxy-1"></label>
+      <label class="field"><span>${T('obProto')}</span><input id="oProto" value="socks" list="oProtoList">
+        <datalist id="oProtoList"><option>freedom</option><option>blackhole</option><option>socks</option>
+        <option>http</option><option>shadowsocks</option><option>vless</option><option>vmess</option>
+        <option>trojan</option><option>wireguard</option></datalist></label>
+      <label class="field"><span>${T('obAddress')}</span><input id="oAddr" placeholder="1.2.3.4"></label>
+      <label class="field"><span>${T('obPort')}</span><input id="oPort" type="number" min="0" max="65535" placeholder="1080"></label>
+      <label class="field"><span>${T('obUser')}</span><input id="oUser"></label>
+      <label class="field"><span>${T('obPass')}</span><input id="oPass"></label>
+      <label class="field"><span>${T('obMethod')}</span><input id="oMethod" placeholder="chacha20-ietf-poly1305 / 10.0.0.2/32"></label>
+      <label class="field"><span>${T('obUuid')}</span><input id="oUuid"></label>
+    </div>
+    <div class="modal-foot"><span class="grow"></span>
+      <button class="btn" id="oCancel">${T('cancel')}</button>
+      <button class="btn primary" id="oSave">${T('save')}</button></div>`);
+  $('oCancel').onclick = closeModal;
+  $('oSave').onclick = async () => {
+    try {
+      await api('POST', '/api/outbounds', { tag: $('oTag').value, protocol: $('oProto').value,
+        address: $('oAddr').value, port: $('oPort').value, username: $('oUser').value,
+        password: $('oPass').value, method: $('oMethod').value, uuid: $('oUuid').value });
+      toast(T('saved'), 'ok');
+      closeModal();
+      await loadAll();
+      goto('outbounds');
+    } catch (e) { toast(e.message, 'bad'); }
+  };
+}
+
+/* ------------------------------------------------------------------ routing */
+async function pageRouting(view) {
+  const rows = S.routes || [];
+  view.innerHTML = `
+    <div class="notice">${T('routingNote')}</div>
+    <div class="toolbar"><button class="btn primary" id="rtAdd">${T('addRoute')}</button>
+      <span class="grow"></span><button class="btn sm" id="rtRefresh">${T('refresh')}</button></div>
+    <div class="tblwrap">
+      ${rows.length ? `<table><thead><tr><th>${T('rtOutbound')}</th><th>${T('rtDomain')}</th><th>${T('rtIp')}</th>
+        <th>${T('rtPort')}</th><th>${T('status')}</th><th>${T('actions')}</th></tr></thead><tbody>
+        ${rows.map((r) => `<tr><td><b>${esc(r.outbound_tag || r.action)}</b></td>
+          <td class="muted">${esc(r.domain || '-')}</td><td class="muted">${esc(r.ip || '-')}</td>
+          <td class="muted">${esc(r.port || '-')}</td>
+          <td><span class="badge ${r.enabled ? 'ok' : ''}">${r.enabled ? T('enabled') : T('disabled')}</span></td>
+          <td class="num" style="white-space:nowrap">
+            <button class="btn sm" data-rtact="toggle" data-id="${esc(r.id)}">${r.enabled ? T('disable') : T('enable')}</button>
+            <button class="btn sm danger" data-rtact="del" data-id="${esc(r.id)}">${T('del')}</button></td></tr>`).join('')}
+        </tbody></table>` : `<div class="empty">${T('noRoutes')}</div>`}
+    </div>`;
+  if ($('rtRefresh')) $('rtRefresh').onclick = () => pageRouting(view);
+  if ($('rtAdd')) $('rtAdd').onclick = () => routeModal();
+  $$('[data-rtact]').forEach((b) => (b.onclick = async () => {
+    const id = b.dataset.id;
+    try {
+      if (b.dataset.rtact === 'toggle') {
+        const r = (S.routes || []).find((x) => x.id === id) || {};
+        await api('PATCH', '/api/routes/' + id, { enabled: !r.enabled });
+      } else {
+        if (!(await confirmAsync(T('confirmDelete')))) return;
+        await api('DELETE', '/api/routes/' + id);
+      }
+      await loadAll();
+      goto('routing');
+    } catch (e) { toast(e.message, 'bad'); }
+  }));
+}
+
+function routeModal() {
+  const tags = ['block', 'direct'].concat((S.outbounds || []).map((o) => o.tag).filter(Boolean));
+  openModal(T('addRoute'), `
+    <div class="form-grid">
+      <label class="field"><span>${T('rtOutbound')}</span><input id="rTag" list="rTagList" value="block">
+        <datalist id="rTagList">${tags.map((t) => `<option>${esc(t)}</option>`).join('')}</datalist></label>
+      <label class="field"><span>${T('rtDomain')}</span><input id="rDomain" placeholder="openai.com, geosite:category-ads-all"></label>
+      <label class="field"><span>${T('rtIp')}</span><input id="rIp" placeholder="geoip:ir, 1.2.3.0/24"></label>
+      <label class="field"><span>${T('rtPort')}</span><input id="rPort" placeholder="443, 1000-2000"></label>
+      <label class="field"><span>${T('rtNetwork')}</span><input id="rNet" placeholder="tcp / udp"></label>
+      <label class="field"><span>${T('rtProtocols')}</span><input id="rProto" placeholder="http / tls / bittorrent"></label>
+      <label class="field"><span>${T('rtInbound')}</span><input id="rIn" placeholder="optional"></label>
+    </div>
+    <p class="muted" style="font-size:10px;margin-top:8px">${T('routingNote')}</p>
+    <div class="modal-foot"><span class="grow"></span>
+      <button class="btn" id="rCancel">${T('cancel')}</button>
+      <button class="btn primary" id="rSave">${T('save')}</button></div>`);
+  $('rCancel').onclick = closeModal;
+  $('rSave').onclick = async () => {
+    try {
+      const tag = $('rTag').value;
+      await api('POST', '/api/routes', { action: tag === 'block' ? 'block' : 'direct', outbound_tag: tag,
+        domain: $('rDomain').value, ip: $('rIp').value, port: $('rPort').value, network: $('rNet').value,
+        protocols: $('rProto').value, inbound_tag: $('rIn').value });
+      toast(T('saved'), 'ok');
+      closeModal();
+      await loadAll();
+      goto('routing');
+    } catch (e) { toast(e.message, 'bad'); }
+  };
+}
+
 /* ------------------------------------------------------------------ TL robot */
 async function pageBot(view) {
   const st = S.bot || {};
