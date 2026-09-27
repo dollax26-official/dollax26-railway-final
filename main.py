@@ -131,7 +131,9 @@ async def _xray_boot():
 def _xray_start_now():
     inbounds = _xray_inbounds()
     return xray_core.start(inbounds, _xray_clients(inbounds),
-                           outbound_rows=db.list_outbounds(), route_rows=db.list_routes())
+                           outbound_rows=db.list_outbounds(), route_rows=db.list_routes(),
+                           outbounds_json=db.setting("outbounds_json"),
+                           routing_json=db.setting("routing_json"))
 
 
 @asynccontextmanager
@@ -1345,7 +1347,8 @@ async def api_set_settings(request: Request):
     d = await request.json()
     allowed = ("panel_name", "public_base_url", "default_port", "xray_bridge_host", "xray_bridge_port",
                "reality_host", "reality_public_port", "tg_token", "tg_owner_id",
-               "tg_trial_inbound", "tg_trial_gb", "tg_trial_days")
+               "tg_trial_inbound", "tg_trial_gb", "tg_trial_days",
+               "outbounds_json", "routing_json")
     for key in allowed:
         if key in d:
             db.set_setting(key, str(d[key])[:200].strip())
