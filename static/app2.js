@@ -93,13 +93,16 @@ async function pageOutbounds(view) {
         <span class="badge ${data.stored ? 'ok' : ''}">${data.stored ? T('customJson') : T('builtIn')}</span></div>
       <textarea id="obJson" class="json-editor" spellcheck="false">${esc(data.json || '[]')}</textarea>
       <div class="toolbar" style="margin-top:10px">
+        <select id="obPreset" class="inline-input" style="max-width:190px">
+          <option value="">${T('pickPreset')}</option>
+          ${Object.keys(presets).map((k) => `<option value="${esc(k)}">${esc(k)}</option>`).join('')}
+        </select>
+        <button class="btn sm" id="obAdd">${T('addOutbound')}</button>
         <button class="btn primary" id="obSave">${T('save')}</button>
         <button class="btn sm" id="obFormat">${T('formatJson')}</button>
         <button class="btn sm" id="obReset">${T('resetJson')}</button>
         <button class="btn sm" id="obClear">${T('clearJson')}</button>
       </div>
-      <div class="preset-row">${Object.keys(presets).map((k) =>
-        `<button class="btn xs" data-obpreset="${esc(k)}">${esc(k)}</button>`).join('')}</div>
       <p class="muted" style="font-size:10px;margin-top:8px">${T('jsonHint')}</p>
     </div>`;
   const ta = $('obJson');
@@ -112,19 +115,22 @@ async function pageOutbounds(view) {
     try { ta.value = '[]'; await api('POST', '/api/xray/outbounds-json', { json: '' }); toast(T('saved'), 'ok'); S.outboundsJson = null; goto('outbounds'); }
     catch (e) { toast(e.message, 'bad'); }
   };
-  $$('[data-obpreset]').forEach((b) => (b.onclick = () => {
+  if ($('obAdd')) $('obAdd').onclick = () => {
+    const key = $('obPreset').value;
+    if (!key || !presets[key]) { toast(T('pickPreset'), 'bad'); return; }
     try {
       const cur = JSON.parse(ta.value || '[]');
-      cur.push(presets[b.dataset.obpreset]);
+      cur.push(presets[key]);
       ta.value = JSON.stringify(cur, null, 2);
-    } catch (e) { toast(T('formatJson') + ' ?', 'bad'); }
-  }));
+      toast(T('ok'), 'ok');
+    } catch (e) { toast(String(e.message).slice(0, 90), 'bad'); }
+  };
   if ($('obSave')) $('obSave').onclick = async () => {
     const btn = $('obSave');
     btn.disabled = true;
     try {
       const r = await api('POST', '/api/xray/outbounds-json', { json: ta.value });
-      toast(r.restarted ? T('saved') + ' · ' + T('coreRestarted') : (r.hint || T('saved')), r.restarted ? 'ok' : 'bad');
+      toast(r.restarted ? T('saved') + ' \u00b7 ' + T('coreRestarted') : (r.hint || T('saved')), r.restarted ? 'ok' : 'bad');
       S.outboundsJson = null;
       await loadAll();
       goto('outbounds');
@@ -138,6 +144,7 @@ async function pageRouting(view) {
   if (!S.routingJson) {
     try { data = S.routingJson = await api('GET', '/api/xray/routing-json'); } catch (e) { data = {}; }
   }
+  if (!S.inbounds) { try { S.inbounds = (await api('GET', '/api/inbounds')).items || []; } catch (e) { S.inbounds = []; } }
   const presets = data.presets || {};
   view.innerHTML = `
     <div class="notice">${T('routingNote')}</div>
@@ -146,38 +153,91 @@ async function pageRouting(view) {
         <span class="badge ${data.stored ? 'ok' : ''}">${data.stored ? T('customJson') : T('builtIn')}</span></div>
       <textarea id="rtJson" class="json-editor" spellcheck="false">${esc(data.json || '[]')}</textarea>
       <div class="toolbar" style="margin-top:10px">
+        <select id="rtPreset" class="inline-input" style="max-width:190px">
+          <option value="">${T('pickPreset')}</option>
+          ${Object.keys(presets).map((k) => `<option value="${esc(k)}">${esc(k)}</option>`).join('')}
+        </select>
+        <button class="btn sm" id="rtAdd">${T('add')}</button>
         <button class="btn primary" id="rtSave">${T('save')}</button>
         <button class="btn sm" id="rtFormat">${T('formatJson')}</button>
         <button class="btn sm" id="rtReset">${T('resetJson')}</button>
         <button class="btn sm" id="rtClear">${T('clearJson')}</button>
       </div>
-      <div class="preset-row">${Object.keys(presets).map((k) =>
-        `<button class="btn xs" data-rtpreset="${esc(k)}">${esc(k)}</button>`).join('')}</div>
+      <details class="rule-builder">
+        <summary>${T('addRule')}</summary>
+        <div class="grid2" style="margin-top:10px">
+          <label class="field"><span>${T('domain')}</span><input id="rbDomain" class="inline-input" placeholder="openai.com, geosite:openai" /></label>
+          <label class="field"><span>${T('ip')}</span><input id="rbIp" class="inline-input" placeholder="1.1.1.1, geoip:ir" /></label>
+          <label class="field"><span>${T('port')}</span><input id="rbPort" class="inline-input" placeholder="443 or 1000-2000" /></label>
+          <label class="field"><span>${T('network')}</span><select id="rbNet" class="inline-input"><option value="">${T('any')}</option><option>tcp</option><option>udp</option><option>tcp,udp</option></select></label>
+          <label class="field"><span>${T('protocol')}</span><input id="rbProto" class="inline-input" placeholder="http, tls, bittorrent" /></label>
+          <label class="field"><span>${T('inboundTag')}</span><select id="rbIn" class="inline-input"><option value="">${T('any')}</option>${(S.inbounds || []).map((i) => `<option>${esc(i.name)}</option>`).join('')}</select></label>
+          <label class="field"><span>${T('outboundTag')}</span><select id="rbOut" class="inline-input"></select></label>
+        </div>
+        <div class="toolbar"><button class="btn sm" id="rbAdd">${T('add')}</button></div>
+      </details>
       <p class="muted" style="font-size:10px;margin-top:8px">${T('jsonHint')}</p>
     </div>`;
   const ta = $('rtJson');
+  const fillTags = () => {
+    const sel = $('rbOut');
+    if (!sel) return;
+    let tags = [];
+    try { tags = JSON.parse(ta.value || '[]').map((o) => o && o.tag).filter(Boolean); } catch (e) { tags = []; }
+    ['direct', 'block'].forEach((t) => { if (!tags.includes(t)) tags.push(t); });
+    sel.innerHTML = tags.map((t) => `<option>${esc(t)}</option>`).join('');
+  };
+  fillTags();
   if ($('rtFormat')) $('rtFormat').onclick = () => {
     try { ta.value = JSON.stringify(JSON.parse(ta.value), null, 2); toast(T('ok'), 'ok'); }
     catch (e) { toast(String(e.message).slice(0, 90), 'bad'); }
   };
-  if ($('rtReset')) $('rtReset').onclick = () => { ta.value = data.effective || '[]'; };
+  if ($('rtReset')) $('rtReset').onclick = () => { ta.value = data.effective || '[]'; fillTags(); };
   if ($('rtClear')) $('rtClear').onclick = async () => {
     try { ta.value = '[]'; await api('POST', '/api/xray/routing-json', { json: '' }); toast(T('saved'), 'ok'); S.routingJson = null; goto('routing'); }
     catch (e) { toast(e.message, 'bad'); }
   };
-  $$('[data-rtpreset]').forEach((b) => (b.onclick = () => {
+  if ($('rtAdd')) $('rtAdd').onclick = () => {
+    const key = $('rtPreset').value;
+    if (!key || !presets[key]) { toast(T('pickPreset'), 'bad'); return; }
     try {
       const cur = JSON.parse(ta.value || '[]');
-      cur.push(presets[b.dataset.rtpreset]);
+      cur.push(presets[key]);
       ta.value = JSON.stringify(cur, null, 2);
-    } catch (e) { toast(T('formatJson') + ' ?', 'bad'); }
-  }));
+      toast(T('ok'), 'ok');
+    } catch (e) { toast(String(e.message).slice(0, 90), 'bad'); }
+  };
+  if ($('rbAdd')) $('rbAdd').onclick = () => {
+    const rule = { type: 'field' };
+    const dom = ($('rbDomain').value || '').trim();
+    const ip = ($('rbIp').value || '').trim();
+    const port = ($('rbPort').value || '').trim();
+    const net = $('rbNet').value;
+    const proto = ($('rbProto').value || '').trim();
+    const inTag = $('rbIn').value;
+    if (dom) rule.domain = dom.split(',').map((x) => x.trim()).filter(Boolean);
+    if (ip) rule.ip = ip.split(',').map((x) => x.trim()).filter(Boolean);
+    if (port) rule.port = port;
+    if (net) rule.network = net;
+    if (proto) rule.protocol = proto.split(',').map((x) => x.trim()).filter(Boolean);
+    if (inTag) rule.inboundTag = [inTag];
+    if (!rule.domain && !rule.ip && !rule.port && !rule.network && !rule.protocol && !rule.inboundTag) {
+      toast(T('needMatcher'), 'bad'); return;
+    }
+    rule.outboundTag = $('rbOut').value || 'direct';
+    try {
+      const cur = JSON.parse(ta.value || '[]');
+      cur.push(rule);
+      ta.value = JSON.stringify(cur, null, 2);
+      toast(T('ok'), 'ok');
+    } catch (e) { toast(String(e.message).slice(0, 90), 'bad'); }
+  };
   if ($('rtSave')) $('rtSave').onclick = async () => {
     const btn = $('rtSave');
     btn.disabled = true;
     try {
       const r = await api('POST', '/api/xray/routing-json', { json: ta.value });
-      toast(r.restarted ? T('saved') + ' · ' + T('coreRestarted') : (r.hint || T('saved')), r.restarted ? 'ok' : 'bad');
+      toast(r.restarted ? T('saved') + ' \u00b7 ' + T('coreRestarted') : (r.hint || T('saved')), r.restarted ? 'ok' : 'bad');
       S.routingJson = null;
       await loadAll();
       goto('routing');
