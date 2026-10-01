@@ -403,3 +403,31 @@ tbody tr{transition:background-color .16s var(--ease)}
 .rule-builder .field span{display:block;font-size:10.5px;color:var(--muted);margin-bottom:3px}
 .rule-builder .toolbar{margin-top:8px}
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
+
+/* ---- 3x-ui style lists (Outbounds / Routing) ---- */
+.or-list{margin-top:10px}
+.or-list table{width:100%;border-collapse:collapse}
+.or-list th{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.or-list td,.or-list th{padding:7px 8px;border-bottom:1px solid color-mix(in srgb,var(--line) 55%,transparent)}
+.or-list tr:hover td{background:color-mix(in srgb,var(--accent) 5%,transparent)}
+.or-list .btn.xs{padding:2px 7px;font-size:10.5px}
+.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px 14px}
+.form-grid .field span{display:block;font-size:10.5px;color:var(--muted);margin-bottom:3px}
+.form-grid .span-2{grid-column:span 2}
+@media (max-width:640px){.form-grid{grid-template-columns:1fr}.form-grid .span-2{grid-column:auto}}
+
+/* ======================= 3x-ui resemblance pass ======================= */
+:root{--r:8px;--r-sm:6px;--r-lg:12px}
+.card,.ib-card,.client-card,.tpl-card{border-radius:10px}
+.btn{border-radius:7px}
+.btn.sm,.btn.xs{border-radius:6px}
+.badge{border-radius:6px}
+.card-head{padding-bottom:9px;border-bottom:1px solid color-mix(in srgb,var(--line) 65%,transparent);margin-bottom:12px}
+th{font-size:10px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);font-weight:600}
+td,th{padding:8px 10px}
+tbody tr:nth-child(even) td{background:color-mix(in srgb,var(--line) 12%,transparent)}
+tbody tr:hover td{background:color-mix(in srgb,var(--accent) 7%,transparent)}
+#nav button.on{background:color-mix(in srgb,var(--accent) 14%,transparent);box-shadow:inset 3px 0 0 var(--accent)}
+.modal{border-radius:12px}
+.inline-input,select,input{border-radius:7px}
+@media (max-width:760px){.content{padding:12px}}
