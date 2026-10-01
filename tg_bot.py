@@ -379,23 +379,31 @@ def _bound_clients(chat_id):
     return _M.db.clients_for_tg(chat_id)
 
 
+def _bar(pct: int) -> str:
+    """A slim ten-cell usage bar for pretty progress lines."""
+    pct = max(0, min(100, int(pct or 0)))
+    filled = int(round(pct / 10.0))
+    return "\u25b0" * filled + "\u25b1" * (10 - filled)
+
+
 def profile_text(chat_id) -> str:
     lg = _lang(chat_id)
     rows = _bound_clients(chat_id)
     if not rows:
-        return "👤 " + tr(lg, "self") + "\\n\\n" + tr(lg, "no_client")
-    out = ["👤 *" + tr(lg, "self") + "*"]
+        return "\U0001f464 " + tr(lg, "self") + "\n\n" + tr(lg, "no_client")
+    out = ["\U0001f464 *" + tr(lg, "self") + "*", "\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501"]
     for c in rows:
         limit = int(c.get("limit_bytes") or 0)
         used = int(c.get("used_bytes") or 0)
         pct = round(used / limit * 100) if limit else 0
-        left = _fmt_bytes(max(0, limit - used)) if limit else "∞"
+        left = _fmt_bytes(max(0, limit - used)) if limit else "\u221e"
         d = _M.db.days_left(c.get("expires_at")) if c.get("expires_at") else None
-        out.append(f"\\n*{c.get('name')}*\\n"
-                   f"{tr(lg, 'used')}: {_fmt_bytes(used)} ({pct}%)\\n"
-                   f"{tr(lg, 'left')}: {left}\\n"
-                   f"{tr(lg, 'days')}: {d if d is not None else '∞'}")
-    return "\\n".join(out)
+        out.append("*" + str(c.get("name")) + "*")
+        out.append(_bar(pct) + "  " + str(pct) + "%")
+        out.append(tr(lg, "used") + ": " + _fmt_bytes(used) + "  \u00b7  " + tr(lg, "left") + ": " + left)
+        out.append("\u23f3 " + tr(lg, "days") + ": " + (str(d) if d is not None else "\u221e"))
+        out.append("\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501")
+    return "\n".join(out)
 
 
 def trial_settings() -> tuple:
@@ -713,22 +721,24 @@ async def handle_text(token: str, chat_id, text: str):
 def client_detail_text(cid: str) -> str:
     row = _M.db.client_row(cid)
     if not row:
-        return "⚠️ client not found"
+        return "\u26a0\ufe0f client not found"
     c = dict(row)
     limit = int(c.get("limit_bytes") or 0)
     used = int(c.get("used_bytes") or 0)
     pct = round(used / limit * 100) if limit else 0
-    left = _fmt_bytes(max(0, limit - used)) if limit else "∞"
+    left = _fmt_bytes(max(0, limit - used)) if limit else "\u221e"
     d = _M.db.days_left(c.get("expires_at")) if c.get("expires_at") else None
     ib = _M.db.inbound_row(c.get("inbound_id")) if c.get("inbound_id") else None
     labels = L.get(_lang("0"), L["fa"])
-    return (f"👤 *{c.get('name')}*\n\n"
-            f"📶 {labels['inbound']}: {(ib['name'] if ib else '-')}\n"
-            f"📊 {labels['used']}: {_fmt_bytes(used)} ({pct}%)\n"
-            f"📦 {labels['left']}: {left}\n"
-            f"⏳ {labels['days']}: {d if d is not None else '∞'}\n"
-            f"🔌 {labels['status']}: {labels['enabled'] if c.get('enabled') else labels['disabled']}\n"
-            f"🧩 {labels['configs']}: {int(c.get('config_count') or 2)}")
+    return ("\U0001f464 *" + str(c.get("name")) + "*\n"
+            "\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n"
+            + _bar(pct) + "  " + str(pct) + "%\n"
+            + "\U0001f4f6 " + labels["inbound"] + ": " + (ib["name"] if ib else "-") + "\n"
+            + "\U0001f4ca " + labels["used"] + ": " + _fmt_bytes(used) + "\n"
+            + "\U0001f4e6 " + labels["left"] + ": " + left + "\n"
+            + "\u23f3 " + labels["days"] + ": " + (str(d) if d is not None else "\u221e") + "\n"
+            + "\U0001f50c " + labels["status"] + ": " + (labels["enabled"] if c.get("enabled") else labels["disabled"]) + "\n"
+            + "\U0001f9e9 " + labels["configs"] + ": " + str(int(c.get("config_count") or 2)))
 
 
 def client_detail_keyboard(cid: str, chat_id) -> dict:
