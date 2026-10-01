@@ -86,51 +86,122 @@ async function pageOutbounds(view) {
     try { data = S.outboundsJson = await api('GET', '/api/xray/outbounds-json'); } catch (e) { data = {}; }
   }
   const presets = data.presets || {};
+  const labelJson = T('viewJson'), labelList = T('viewList');
   view.innerHTML = `
     <div class="notice">${T('outboundsNote')}</div>
     <div class="card">
       <div class="card-head"><h2>${T('nav_outbounds')}</h2>
         <span class="badge ${data.stored ? 'ok' : ''}">${data.stored ? T('customJson') : T('builtIn')}</span></div>
-      <textarea id="obJson" class="json-editor" spellcheck="false">${esc(data.json || '[]')}</textarea>
-      <div class="toolbar" style="margin-top:10px">
-        <select id="obPreset" class="inline-input" style="max-width:190px">
-          <option value="">${T('pickPreset')}</option>
-          ${Object.keys(presets).map((k) => `<option value="${esc(k)}">${esc(k)}</option>`).join('')}
-        </select>
-        <button class="btn sm" id="obAdd">${T('addOutbound')}</button>
+      <div class="toolbar" style="margin-top:6px">
+        <button class="btn sm" id="obAddBtn">＋ ${T('addOutbound')}</button>
         <button class="btn primary" id="obSave">${T('save')}</button>
-        <button class="btn sm" id="obFormat">${T('formatJson')}</button>
-        <button class="btn sm" id="obReset">${T('resetJson')}</button>
-        <button class="btn sm" id="obClear">${T('clearJson')}</button>
+        <button class="btn sm" id="obViewToggle">${labelJson}</button>
+        <span class="muted" id="obDirty" style="display:none;font-size:10px">● ${T('unsaved')}</span>
+      </div>
+      <div id="obList" class="or-list"></div>
+      <div id="obJsonWrap" class="hidden">
+        <textarea id="obJson" class="json-editor" spellcheck="false">${esc(data.json || '[]')}</textarea>
+        <div class="toolbar" style="margin-top:8px">
+          <button class="btn sm" id="obFormat">${T('formatJson')}</button>
+          <button class="btn sm" id="obReset">${T('resetJson')}</button>
+          <button class="btn sm" id="obClear">${T('clearJson')}</button>
+        </div>
       </div>
       <p class="muted" style="font-size:10px;margin-top:8px">${T('jsonHint')}</p>
     </div>`;
   const ta = $('obJson');
+  const parse = () => { try { return JSON.parse(ta.value || '[]'); } catch (e) { return null; } };
+  const dirty = () => { const d = $('obDirty'); if (d) d.style.display = 'inline'; };
+  const renderList = () => {
+    const box = $('obList');
+    if (!box) return;
+    const arr = parse();
+    if (arr === null) { box.innerHTML = '<p class="muted" style="font-size:11px">JSON ✗</p>'; return; }
+    if (!arr.length) { box.innerHTML = '<p class="muted" style="font-size:11px">' + T('noItems') + '</p>'; return; }
+    box.innerHTML = '<div class="tblwrap"><table><thead><tr>' +
+      '<th>' + T('tag') + '</th><th>' + T('protocol') + '</th><th>' + T('address') + '</th><th></th>' +
+      '</tr></thead><tbody>' +
+      arr.map((o, i) => {
+        const st = (o && o.settings) || {};
+        const vn = ((st.vnext || st.servers || [])[0]) || {};
+        const addr = vn.address || st.address || '';
+        const port = vn.port || st.port || '';
+        return '<tr><td class="mono">' + esc(o.tag || '-') + '</td><td>' + esc(o.protocol || '-') +
+          '</td><td class="mono">' + esc(addr) + (port ? ':' + port : '') +
+          '</td><td class="num"><button class="btn xs" data-obdel="' + i + '">🗑</button></td></tr>';
+      }).join('') + '</tbody></table></div>';
+    $$('[data-obdel]').forEach((b) => (b.onclick = () => {
+      const arr2 = parse();
+      if (arr2 === null) return;
+      arr2.splice(Number(b.dataset.obdel), 1);
+      ta.value = JSON.stringify(arr2, null, 2);
+      dirty();
+      renderList();
+    }));
+  };
+  renderList();
+  if ($('obViewToggle')) $('obViewToggle').onclick = () => {
+    const wrap = $('obJsonWrap'), list = $('obList');
+    const showJson = wrap.classList.contains('hidden');
+    wrap.classList.toggle('hidden', !showJson);
+    list.classList.toggle('hidden', showJson);
+    $('obViewToggle').textContent = showJson ? labelList : labelJson;
+    if (!showJson) renderList();
+  };
   if ($('obFormat')) $('obFormat').onclick = () => {
-    try { ta.value = JSON.stringify(JSON.parse(ta.value), null, 2); toast(T('ok'), 'ok'); }
+    try { ta.value = JSON.stringify(JSON.parse(ta.value), null, 2); renderList(); toast(T('ok'), 'ok'); }
     catch (e) { toast(String(e.message).slice(0, 90), 'bad'); }
   };
-  if ($('obReset')) $('obReset').onclick = () => { ta.value = data.effective || '[]'; };
+  if ($('obReset')) $('obReset').onclick = () => { ta.value = data.effective || '[]'; renderList(); };
   if ($('obClear')) $('obClear').onclick = async () => {
     try { ta.value = '[]'; await api('POST', '/api/xray/outbounds-json', { json: '' }); toast(T('saved'), 'ok'); S.outboundsJson = null; goto('outbounds'); }
     catch (e) { toast(e.message, 'bad'); }
   };
-  if ($('obAdd')) $('obAdd').onclick = () => {
-    const key = $('obPreset').value;
-    if (!key || !presets[key]) { toast(T('pickPreset'), 'bad'); return; }
-    try {
-      const cur = JSON.parse(ta.value || '[]');
-      cur.push(presets[key]);
-      ta.value = JSON.stringify(cur, null, 2);
+  if ($('obAddBtn')) $('obAddBtn').onclick = () => {
+    const opts = Object.keys(presets).map((k) => '<option value="' + esc(k) + '">' + esc(k) + '</option>').join('');
+    openModal(T('addOutbound'), `
+      <div class="form-grid">
+        <label class="field"><span>${T('protocol')}</span><select id="obmProto" class="inline-input">${opts}</select></label>
+        <label class="field"><span>${T('tag')}</span><input id="obmTag" class="inline-input" placeholder="my-out" /></label>
+        <label class="field"><span>${T('address')}</span><input id="obmAddr" class="inline-input" placeholder="1.2.3.4" /></label>
+        <label class="field"><span>${T('port')}</span><input id="obmPort" class="inline-input" placeholder="443" /></label>
+        <label class="field span-2"><span>${T('secret')}</span><input id="obmSecret" class="inline-input" placeholder="password / uuid" /></label>
+      </div>
+      <div class="confirm-actions" style="margin-top:12px">
+        <button class="btn" id="obmCancel">${T('cancel')}</button>
+        <button class="btn primary" id="obmOk">${T('add')}</button>
+      </div>`, true);
+    $('obmCancel').onclick = closeModal;
+    $('obmOk').onclick = () => {
+      const key = $('obmProto').value;
+      const base = JSON.parse(JSON.stringify(presets[key] || { tag: key, protocol: key, settings: {} }));
+      const tag = ($('obmTag').value || '').trim(); if (tag) base.tag = tag;
+      const addr = ($('obmAddr').value || '').trim();
+      const port = parseInt($('obmPort').value, 10) || 0;
+      const sec = ($('obmSecret').value || '').trim();
+      const st = base.settings || {};
+      const vn = ((st.vnext || st.servers || [])[0]) || null;
+      if (vn) {
+        if (addr) vn.address = addr;
+        if (port) vn.port = port;
+        if (sec) { if (vn.users) vn.users[0].id = sec; else vn.password = sec; }
+      }
+      if (Array.isArray(st.peers) && addr && port) st.peers[0].endpoint = addr + ':' + port;
+      if (st.secretKey !== undefined && sec) st.secretKey = sec;
+      const arr = parse();
+      if (arr === null) return;
+      arr.push(base);
+      ta.value = JSON.stringify(arr, null, 2);
+      dirty(); closeModal(); renderList();
       toast(T('ok'), 'ok');
-    } catch (e) { toast(String(e.message).slice(0, 90), 'bad'); }
+    };
   };
   if ($('obSave')) $('obSave').onclick = async () => {
     const btn = $('obSave');
     btn.disabled = true;
     try {
       const r = await api('POST', '/api/xray/outbounds-json', { json: ta.value });
-      toast(r.restarted ? T('saved') + ' \u00b7 ' + T('coreRestarted') : (r.hint || T('saved')), r.restarted ? 'ok' : 'bad');
+      toast(r.restarted ? T('saved') + ' · ' + T('coreRestarted') : (r.hint || T('saved')), r.restarted ? 'ok' : 'bad');
       S.outboundsJson = null;
       await loadAll();
       goto('outbounds');
@@ -146,98 +217,144 @@ async function pageRouting(view) {
   }
   if (!S.inbounds) { try { S.inbounds = (await api('GET', '/api/inbounds')).items || []; } catch (e) { S.inbounds = []; } }
   const presets = data.presets || {};
+  const labelJson = T('viewJson'), labelList = T('viewList');
+  const lst = (v) => (Array.isArray(v) ? v.join(', ') : (v || ''));
   view.innerHTML = `
     <div class="notice">${T('routingNote')}</div>
     <div class="card">
       <div class="card-head"><h2>${T('nav_routes')}</h2>
         <span class="badge ${data.stored ? 'ok' : ''}">${data.stored ? T('customJson') : T('builtIn')}</span></div>
-      <textarea id="rtJson" class="json-editor" spellcheck="false">${esc(data.json || '[]')}</textarea>
-      <div class="toolbar" style="margin-top:10px">
-        <select id="rtPreset" class="inline-input" style="max-width:190px">
-          <option value="">${T('pickPreset')}</option>
-          ${Object.keys(presets).map((k) => `<option value="${esc(k)}">${esc(k)}</option>`).join('')}
-        </select>
-        <button class="btn sm" id="rtAdd">${T('add')}</button>
+      <div class="toolbar" style="margin-top:6px">
+        <button class="btn sm" id="rtAddBtn">＋ ${T('addRule')}</button>
         <button class="btn primary" id="rtSave">${T('save')}</button>
-        <button class="btn sm" id="rtFormat">${T('formatJson')}</button>
-        <button class="btn sm" id="rtReset">${T('resetJson')}</button>
-        <button class="btn sm" id="rtClear">${T('clearJson')}</button>
+        <button class="btn sm" id="rtViewToggle">${labelJson}</button>
+        <span class="muted" id="rtDirty" style="display:none;font-size:10px">● ${T('unsaved')}</span>
       </div>
-      <details class="rule-builder">
-        <summary>${T('addRule')}</summary>
-        <div class="grid2" style="margin-top:10px">
-          <label class="field"><span>${T('domain')}</span><input id="rbDomain" class="inline-input" placeholder="openai.com, geosite:openai" /></label>
-          <label class="field"><span>${T('ip')}</span><input id="rbIp" class="inline-input" placeholder="1.1.1.1, geoip:ir" /></label>
-          <label class="field"><span>${T('port')}</span><input id="rbPort" class="inline-input" placeholder="443 or 1000-2000" /></label>
-          <label class="field"><span>${T('network')}</span><select id="rbNet" class="inline-input"><option value="">${T('any')}</option><option>tcp</option><option>udp</option><option>tcp,udp</option></select></label>
-          <label class="field"><span>${T('protocol')}</span><input id="rbProto" class="inline-input" placeholder="http, tls, bittorrent" /></label>
-          <label class="field"><span>${T('inboundTag')}</span><select id="rbIn" class="inline-input"><option value="">${T('any')}</option>${(S.inbounds || []).map((i) => `<option>${esc(i.name)}</option>`).join('')}</select></label>
-          <label class="field"><span>${T('outboundTag')}</span><select id="rbOut" class="inline-input"></select></label>
+      <div id="rtList" class="or-list"></div>
+      <div id="rtJsonWrap" class="hidden">
+        <textarea id="rtJson" class="json-editor" spellcheck="false">${esc(data.json || '[]')}</textarea>
+        <div class="toolbar" style="margin-top:8px">
+          <button class="btn sm" id="rtFormat">${T('formatJson')}</button>
+          <button class="btn sm" id="rtReset">${T('resetJson')}</button>
+          <button class="btn sm" id="rtClear">${T('clearJson')}</button>
         </div>
-        <div class="toolbar"><button class="btn sm" id="rbAdd">${T('add')}</button></div>
-      </details>
+      </div>
       <p class="muted" style="font-size:10px;margin-top:8px">${T('jsonHint')}</p>
     </div>`;
   const ta = $('rtJson');
-  const fillTags = () => {
-    const sel = $('rbOut');
-    if (!sel) return;
-    let tags = [];
-    try { tags = JSON.parse(ta.value || '[]').map((o) => o && o.tag).filter(Boolean); } catch (e) { tags = []; }
-    ['direct', 'block'].forEach((t) => { if (!tags.includes(t)) tags.push(t); });
-    sel.innerHTML = tags.map((t) => `<option>${esc(t)}</option>`).join('');
+  const parse = () => { try { return JSON.parse(ta.value || '[]'); } catch (e) { return null; } };
+  const dirty = () => { const d = $('rtDirty'); if (d) d.style.display = 'inline'; };
+  const mutate = (fn) => {
+    const arr = parse();
+    if (arr === null) return;
+    fn(arr);
+    ta.value = JSON.stringify(arr, null, 2);
+    dirty();
+    renderList();
   };
-  fillTags();
+  const renderList = () => {
+    const box = $('rtList');
+    if (!box) return;
+    const arr = parse();
+    if (arr === null) { box.innerHTML = '<p class="muted" style="font-size:11px">JSON ✗</p>'; return; }
+    if (!arr.length) { box.innerHTML = '<p class="muted" style="font-size:11px">' + T('noItems') + '</p>'; return; }
+    box.innerHTML = '<div class="tblwrap"><table><thead><tr>' +
+      '<th>#</th><th>' + T('domain') + '</th><th>' + T('ip') + '</th><th>' + T('port') + '</th><th>' + T('network') + '</th><th>' + T('protocol') + '</th><th>' + T('inboundTag') + '</th><th>' + T('outboundTag') + '</th><th></th>' +
+      '</tr></thead><tbody>' +
+      arr.map((r, i) => '<tr>' +
+        '<td class="num">' + (i + 1) + '</td>' +
+        '<td class="mono">' + esc(lst(r.domain)) + '</td>' +
+        '<td class="mono">' + esc(lst(r.ip)) + '</td>' +
+        '<td class="mono">' + esc(r.port || '') + '</td>' +
+        '<td>' + esc(r.network || '') + '</td>' +
+        '<td class="mono">' + esc(lst(r.protocol)) + '</td>' +
+        '<td>' + esc(lst(r.inboundTag)) + '</td>' +
+        '<td class="mono">' + esc(r.outboundTag || '') + '</td>' +
+        '<td class="num" style="white-space:nowrap">' +
+          '<button class="btn xs" data-rtup="' + i + '">↑</button> ' +
+          '<button class="btn xs" data-rtdn="' + i + '">↓</button> ' +
+          '<button class="btn xs" data-rtdel="' + i + '">🗑</button></td></tr>').join('') +
+      '</tbody></table></div>';
+    $$('[data-rtdel]').forEach((b) => (b.onclick = () => mutate((a2) => a2.splice(Number(b.dataset.rtdel), 1))));
+    $$('[data-rtup]').forEach((b) => (b.onclick = () => mutate((a2) => {
+      const i2 = Number(b.dataset.rtup);
+      if (i2 > 0) { const t2 = a2[i2 - 1]; a2[i2 - 1] = a2[i2]; a2[i2] = t2; }
+    })));
+    $$('[data-rtdn]').forEach((b) => (b.onclick = () => mutate((a2) => {
+      const i2 = Number(b.dataset.rtdn);
+      if (i2 < a2.length - 1) { const t2 = a2[i2 + 1]; a2[i2 + 1] = a2[i2]; a2[i2] = t2; }
+    })));
+  };
+  renderList();
+  if ($('rtViewToggle')) $('rtViewToggle').onclick = () => {
+    const wrap = $('rtJsonWrap'), list = $('rtList');
+    const showJson = wrap.classList.contains('hidden');
+    wrap.classList.toggle('hidden', !showJson);
+    list.classList.toggle('hidden', showJson);
+    $('rtViewToggle').textContent = showJson ? labelList : labelJson;
+    if (!showJson) renderList();
+  };
   if ($('rtFormat')) $('rtFormat').onclick = () => {
-    try { ta.value = JSON.stringify(JSON.parse(ta.value), null, 2); toast(T('ok'), 'ok'); }
+    try { ta.value = JSON.stringify(JSON.parse(ta.value), null, 2); renderList(); toast(T('ok'), 'ok'); }
     catch (e) { toast(String(e.message).slice(0, 90), 'bad'); }
   };
-  if ($('rtReset')) $('rtReset').onclick = () => { ta.value = data.effective || '[]'; fillTags(); };
+  if ($('rtReset')) $('rtReset').onclick = () => { ta.value = data.effective || '[]'; renderList(); };
   if ($('rtClear')) $('rtClear').onclick = async () => {
     try { ta.value = '[]'; await api('POST', '/api/xray/routing-json', { json: '' }); toast(T('saved'), 'ok'); S.routingJson = null; goto('routing'); }
     catch (e) { toast(e.message, 'bad'); }
   };
-  if ($('rtAdd')) $('rtAdd').onclick = () => {
-    const key = $('rtPreset').value;
-    if (!key || !presets[key]) { toast(T('pickPreset'), 'bad'); return; }
-    try {
-      const cur = JSON.parse(ta.value || '[]');
-      cur.push(presets[key]);
-      ta.value = JSON.stringify(cur, null, 2);
+  if ($('rtAddBtn')) $('rtAddBtn').onclick = () => {
+    const ibs = (S.inbounds || []).map((i) => '<option>' + esc(i.name) + '</option>').join('');
+    let tags = [];
+    try { tags = parse().map((o) => o && o.tag).filter(Boolean); } catch (e) { tags = []; }
+    ['direct', 'block'].forEach((t) => { if (!tags.includes(t)) tags.push(t); });
+    openModal(T('addRule'), `
+      <div class="form-grid">
+        <label class="field"><span>${T('domain')}</span><input id="rmDomain" class="inline-input" placeholder="openai.com, geosite:openai" /></label>
+        <label class="field"><span>${T('ip')}</span><input id="rmIp" class="inline-input" placeholder="1.1.1.1, geoip:ir" /></label>
+        <label class="field"><span>${T('port')}</span><input id="rmPort" class="inline-input" placeholder="443 or 1000-2000" /></label>
+        <label class="field"><span>${T('network')}</span><select id="rmNet" class="inline-input"><option value="">${T('any')}</option><option>tcp</option><option>udp</option><option>tcp,udp</option></select></label>
+        <label class="field"><span>${T('protocol')}</span><input id="rmProto" class="inline-input" placeholder="http, tls, bittorrent" /></label>
+        <label class="field"><span>${T('inboundTag')}</span><select id="rmIn" class="inline-input"><option value="">${T('any')}</option>${ibs}</select></label>
+        <label class="field span-2"><span>${T('outboundTag')}</span><select id="rmOut" class="inline-input">${tags.map((t) => '<option>' + esc(t) + '</option>').join('')}</select></label>
+      </div>
+      <div class="confirm-actions" style="margin-top:12px">
+        <button class="btn" id="rmCancel">${T('cancel')}</button>
+        <button class="btn primary" id="rmOk">${T('add')}</button>
+      </div>`, true);
+    $('rmCancel').onclick = closeModal;
+    $('rmOk').onclick = () => {
+      const rule = { type: 'field' };
+      const dom = ($('rmDomain').value || '').trim();
+      const ip = ($('rmIp').value || '').trim();
+      const port = ($('rmPort').value || '').trim();
+      const net = $('rmNet').value;
+      const proto = ($('rmProto').value || '').trim();
+      const inTag = $('rmIn').value;
+      if (dom) rule.domain = dom.split(',').map((x) => x.trim()).filter(Boolean);
+      if (ip) rule.ip = ip.split(',').map((x) => x.trim()).filter(Boolean);
+      if (port) rule.port = port;
+      if (net) rule.network = net;
+      if (proto) rule.protocol = proto.split(',').map((x) => x.trim()).filter(Boolean);
+      if (inTag) rule.inboundTag = [inTag];
+      if (!rule.domain && !rule.ip && !rule.port && !rule.network && !rule.protocol && !rule.inboundTag) {
+        toast(T('needMatcher'), 'bad'); return;
+      }
+      rule.outboundTag = $('rmOut').value || 'direct';
+      const arr = parse();
+      if (arr === null) return;
+      arr.push(rule);
+      ta.value = JSON.stringify(arr, null, 2);
+      dirty(); closeModal(); renderList();
       toast(T('ok'), 'ok');
-    } catch (e) { toast(String(e.message).slice(0, 90), 'bad'); }
-  };
-  if ($('rbAdd')) $('rbAdd').onclick = () => {
-    const rule = { type: 'field' };
-    const dom = ($('rbDomain').value || '').trim();
-    const ip = ($('rbIp').value || '').trim();
-    const port = ($('rbPort').value || '').trim();
-    const net = $('rbNet').value;
-    const proto = ($('rbProto').value || '').trim();
-    const inTag = $('rbIn').value;
-    if (dom) rule.domain = dom.split(',').map((x) => x.trim()).filter(Boolean);
-    if (ip) rule.ip = ip.split(',').map((x) => x.trim()).filter(Boolean);
-    if (port) rule.port = port;
-    if (net) rule.network = net;
-    if (proto) rule.protocol = proto.split(',').map((x) => x.trim()).filter(Boolean);
-    if (inTag) rule.inboundTag = [inTag];
-    if (!rule.domain && !rule.ip && !rule.port && !rule.network && !rule.protocol && !rule.inboundTag) {
-      toast(T('needMatcher'), 'bad'); return;
-    }
-    rule.outboundTag = $('rbOut').value || 'direct';
-    try {
-      const cur = JSON.parse(ta.value || '[]');
-      cur.push(rule);
-      ta.value = JSON.stringify(cur, null, 2);
-      toast(T('ok'), 'ok');
-    } catch (e) { toast(String(e.message).slice(0, 90), 'bad'); }
+    };
   };
   if ($('rtSave')) $('rtSave').onclick = async () => {
     const btn = $('rtSave');
     btn.disabled = true;
     try {
       const r = await api('POST', '/api/xray/routing-json', { json: ta.value });
-      toast(r.restarted ? T('saved') + ' \u00b7 ' + T('coreRestarted') : (r.hint || T('saved')), r.restarted ? 'ok' : 'bad');
+      toast(r.restarted ? T('saved') + ' · ' + T('coreRestarted') : (r.hint || T('saved')), r.restarted ? 'ok' : 'bad');
       S.routingJson = null;
       await loadAll();
       goto('routing');
