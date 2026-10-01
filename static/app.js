@@ -9,6 +9,7 @@
 /* ------------------------------------------------------------------ i18n */
 const I18N = {
   en: {
+    jsonHint: 'Save writes the JSON into the Xray config and restarts the core. Empty = built-in defaults.', formatJson: 'Format', resetJson: 'Reset', clearJson: 'Clear (use built-ins)', customJson: 'custom JSON', builtIn: 'built-in', coreRestarted: 'core restarted', addRule: '➕ Add rule', needMatcher: 'Fill at least one field', domain: 'Domain', inboundTag: 'Inbound tag', outboundTag: 'Outbound tag', add: 'Add', any: 'Any', pickPreset: 'Pick a preset…', addOutbound: 'Add outbound', ok: 'OK',
     brandSub: 'VPN MANAGEMENT', running: 'Running', logout: 'Logout', loading: 'Loading…',
     nav_overview: 'Overview', nav_inbounds: 'Inbounds', nav_clients: 'Clients',
     nav_logs: 'Logs', nav_admins: 'Admins', nav_settings: 'Settings',
@@ -133,6 +134,7 @@ const I18N = {
     runTimes: 'times',
   },
   fa: {
+    jsonHint: 'با ذخیره، JSON در کانفیگ Xray نوشته و هسته دوباره راه‌اندازی می‌شود. خالی = پیش‌فرض‌های داخلی.', formatJson: 'قالب‌بندی', resetJson: 'بازنشانی', clearJson: 'پاک‌کردن (پیش‌فرض)', customJson: 'JSON سفارشی', builtIn: 'داخلی', coreRestarted: 'هسته دوباره راه‌اندازی شد', addRule: '➕ افزودن قانون', needMatcher: 'حداقل یک شرط را پر کنید', domain: 'دامنه', ip: 'آی‌پی', port: 'پورت', network: 'شبکه', protocol: 'پروتکل', inboundTag: 'تگ اینباند', outboundTag: 'تگ خروجی', add: 'افزودن', any: 'همه', pickPreset: 'انتخاب قالب…', addOutbound: 'افزودن خروجی', saved: 'ذخیره شد', ok: 'انجام شد',
     brandSub: 'مدیریت وی‌پی‌ان', running: 'فعال', logout: 'خروج', loading: 'در حال بارگذاری…',
     nav_overview: 'نمای کلی', nav_inbounds: 'ورودی‌ها', nav_clients: 'کاربران',
     nav_logs: 'گزارش‌ها', nav_admins: 'مدیران', nav_settings: 'تنظیمات',
@@ -818,6 +820,15 @@ function goto(page) {
   $('pageTitle').textContent = titles[S.page];
   $$('#nav button').forEach((b) => b.classList.toggle('on', b.dataset.p === S.page));
   render();
+  _pulsePage();
+}
+
+function _pulsePage() {
+  const host = document.getElementById('view') || document.querySelector('.content') || document.querySelector('main');
+  if (!host) return;
+  host.classList.remove('page-in');
+  void host.offsetWidth;
+  host.classList.add('page-in');
 }
 
 /* ------------------------------------------------------------------ data */
