@@ -50,7 +50,7 @@ except Exception:  # pragma: no cover
     qrcode = None
     _qr_svg = None
 
-APP_VERSION = "2026.09.19-r1"
+APP_VERSION = "2026.10.01-r4"
 
 SESSION_SECRET = os.getenv("SECRET_KEY") or secrets.token_urlsafe(48)
 
